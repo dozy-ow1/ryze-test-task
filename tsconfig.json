@@ -1,0 +1,11 @@
+{
+  "extends": "./tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "paths": {
+      "@ryze/core": ["./packages/core/src/index.ts"]
+    }
+  },
+  "include": ["scripts", "test", "packages/*/test", "vitest.config.ts"]
+}

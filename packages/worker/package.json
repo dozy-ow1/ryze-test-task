@@ -1,0 +1,15 @@
+{
+  "name": "@ryze/worker",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json"
+  },
+  "dependencies": {
+    "@ryze/core": "workspace:*"
+  }
+}

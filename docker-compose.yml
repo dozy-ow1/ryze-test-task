@@ -1,0 +1,65 @@
+name: ryze
+
+x-worker: &worker
+  build:
+    context: .
+    dockerfile: deploy/docker/Dockerfile
+    args:
+      PKG: worker
+  image: ryze-worker
+  env_file: .env
+
+services:
+  postgres:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ryze
+      POSTGRES_PASSWORD: ryze
+      POSTGRES_DB: ryze
+    ports:
+      - "${POSTGRES_PORT:-5432}:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+      - ./db:/db:ro # docker compose exec postgres psql -U ryze -d ryze -f /db/schema_test.sql
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ryze -d ryze"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio:
+    image: bitnamilegacy/minio:2025.7.23-debian-12-r5
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY}
+    ports:
+      - "9000:9000"
+      - "9001:9001"
+    volumes:
+      - miniodata:/bitnami/minio/data
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:9000/minio/health/live"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+  minio-init:
+    image: bitnamilegacy/minio-client:2025.7.21-debian-12-r3
+    env_file: .env
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - mc alias set local http://minio:9000 "$$S3_ACCESS_KEY" "$$S3_SECRET_KEY" && mc mb --ignore-existing "local/$$S3_BUCKET"
+    depends_on:
+      minio:
+        condition: service_healthy
+
+  migrate:
+    <<: *worker
+    command: ["node", "dist/scripts/migrate.js"]
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+volumes:
+  pgdata:
+  miniodata:

@@ -1,0 +1,28 @@
+{
+  "name": "ryze-pipeline",
+  "private": true,
+  "type": "module",
+  "packageManager": "pnpm@10.34.8",
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "pnpm -r build",
+    "typecheck": "pnpm -r build && tsc -p tsconfig.json",
+    "lint": "biome check .",
+    "format": "biome check --write .",
+    "test": "vitest run",
+    "migrate": "tsx scripts/migrate.ts",
+    "seed": "tsx scripts/seed.ts",
+    "demo": "tsx scripts/demo.ts",
+    "smoke": "tsx scripts/smoke.ts"
+  },
+  "devDependencies": {
+    "@biomejs/biome": "2.6.3",
+    "@ryze/core": "workspace:*",
+    "@types/node": "22.20.5",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vitest": "3.2.7"
+  }
+}
