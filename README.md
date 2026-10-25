@@ -23,6 +23,24 @@ Check the SQL contract against the Compose database (30 assertions, rolled back 
 docker compose exec postgres psql -U ryze -d ryze -v ON_ERROR_STOP=1 -f /db/schema_test.sql
 ```
 
+## Intake API (port 8080)
+
+Stateless Fastify process: it writes rows and never calls a provider or a platform. No
+authentication in this version.
+
+| Route | Result |
+| --- | --- |
+| `POST /sites {platform, base_url, token}` | 201 `{id}`; token stored AES-256-GCM encrypted; creates the site's quota row |
+| `POST /articles {site_id, brief, idempotency_key}` | 202 `{article_id}` when new, 200 with the same id when the key repeats |
+| `POST /articles/bulk {items}` (≤ 1000) | 202 `{results: [{article_id, created}]}`, one transaction, three statements in total |
+| `GET /articles/:id` | the article and its operations |
+| `GET /articles/summary` | operation counts by step and status, articles total and published |
+| `POST /articles/:id/retry` | 202 if the latest operation is `failed` or `unknown`, else 409 |
+| `GET /healthz`, `GET /readyz` | liveness; readiness runs `SELECT 1` (503 when the database is down) |
+
+Errors: 400 validation, 404 unknown site or article, 409 inactive site or retry not allowed,
+503 database unavailable (requests are transactional, so a failure never leaves partial rows).
+
 ## Notes on inputs
 
 - `db/schema.sql` and `db/schema_test.sql` were not part of the build spec I received, so they were

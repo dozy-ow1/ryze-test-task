@@ -152,6 +152,12 @@ export function createPool(connectionString: string, max = 10): pg.Pool {
 export async function tx<T>(db: pg.Pool, fn: (client: pg.PoolClient) => Promise<T>): Promise<T> {
   const client = await db.connect();
   let broken: Error | undefined;
+  // A checked-out client whose connection dies emits 'error'; unhandled, that would crash the
+  // process. Record it instead: the pending query fails and the client is discarded on release.
+  const onError = (err: Error) => {
+    broken = err;
+  };
+  client.on('error', onError);
   try {
     await client.query('BEGIN');
     const out = await fn(client);
@@ -163,6 +169,7 @@ export async function tx<T>(db: pg.Pool, fn: (client: pg.PoolClient) => Promise<
     });
     throw err;
   } finally {
+    client.off('error', onError);
     client.release(broken);
   }
 }

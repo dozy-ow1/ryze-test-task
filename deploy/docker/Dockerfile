@@ -11,9 +11,11 @@ COPY pnpm-lock.yaml pnpm-workspace.yaml ./
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store pnpm fetch --store-dir /pnpm/store
 
 FROM deps AS build
+ARG PKG
 COPY . .
 RUN --mount=type=cache,id=pnpm-store,target=/pnpm/store \
-    pnpm install --offline --frozen-lockfile --store-dir /pnpm/store && pnpm -r build
+    pnpm install --offline --frozen-lockfile --store-dir /pnpm/store \
+    && pnpm --filter "@ryze/${PKG}..." build
 
 FROM build AS deploy
 ARG PKG
