@@ -23,6 +23,8 @@ export function s3Store(config: WorkerConfig): Store {
     credentials: { accessKeyId: config.S3_ACCESS_KEY, secretAccessKey: config.S3_SECRET_KEY },
     requestChecksumCalculation: 'WHEN_REQUIRED',
     responseChecksumValidation: 'WHEN_REQUIRED',
+    // Without a deadline a hung call would hold its operation forever (the lease keeps renewing).
+    requestHandler: { connectionTimeout: 5_000, requestTimeout: config.HTTP_TIMEOUT_MS },
   });
   const Bucket = config.S3_BUCKET;
   return {

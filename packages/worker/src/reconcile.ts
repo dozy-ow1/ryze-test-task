@@ -57,20 +57,30 @@ async function removeStrays(r: Reconcile, inspectUrl: string) {
     `${inspectUrl}/_admin/inspect`,
   );
   const { rows: sites } = await r.db.query('SELECT id, platform, base_url, token_enc FROM sites');
-  const byToken = new Map(sites.map((s) => [decryptToken(s.token_enc, r.siteTokenKey), s]));
+  // Several site rows can point at the same account (the same blog registered twice): their
+  // articles all live on it.
+  const byToken = new Map<string, typeof sites>();
+  for (const s of sites) {
+    const token = decryptToken(s.token_enc, r.siteTokenKey);
+    byToken.set(token, [...(byToken.get(token) ?? []), s]);
+  }
   let found = 0;
   let deleted = 0;
   for (const remote of inspected.sites) {
-    const s = byToken.get(remote.token);
-    if (!s) continue;
+    const rowsForToken = byToken.get(remote.token);
+    if (!rowsForToken) continue;
+    const s = rowsForToken[0];
     const site = { id: s.id, platform: s.platform, base_url: s.base_url, token: remote.token };
     const { rows } = await r.db.query<{ id: string; remote_post_id: string | null }>(
-      'SELECT id, remote_post_id FROM articles WHERE site_id = $1',
-      [site.id],
+      'SELECT id, remote_post_id FROM articles WHERE site_id = ANY ($1::uuid[])',
+      [rowsForToken.map((x) => x.id)],
     );
     const recorded = new Map(rows.map((a) => [a.id, a.remote_post_id]));
     for (const post of remote.posts) {
       if (!post.article_id) continue; // not ours
+      // An article we do not know (another environment on the same blog) is not ours to judge;
+      // one that recorded no post yet has a draft step in flight.
+      if (!recorded.has(post.article_id)) continue;
       const postId = recorded.get(post.article_id);
       if (postId === post.id || postId === null) continue;
       found++;

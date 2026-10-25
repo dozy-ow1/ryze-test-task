@@ -265,3 +265,35 @@ describe('runStep', () => {
     expect(await runStep(r, op)).toBe('lost_lease');
   });
 });
+
+describe('a lease lost while waiting for an image slot', () => {
+  it('never starts the paid call', async () => {
+    const op = await claimed('image_submit', 0.6);
+    const imageLimit = pLimit(1);
+    let release = () => {};
+    const blocker = imageLimit(() => new Promise<void>((done) => (release = done)));
+    let called = false;
+    const r = {
+      ...runner(
+        {
+          image_submit: async () => {
+            called = true;
+            return { providerRef: 'job-2' };
+          },
+        },
+        0.6,
+      ),
+      imageLimit,
+    };
+    const running = runStep(r, op);
+    // Meanwhile another worker takes the row over.
+    await t.db.query('UPDATE operations SET lease_version = lease_version + 1 WHERE id = $1', [
+      op.id,
+    ]);
+    await sleep(500); // a renewal (every 0.2 s) notices
+    release();
+    expect(await running).toBe('lost_lease');
+    expect(called).toBe(false);
+    await blocker;
+  });
+});

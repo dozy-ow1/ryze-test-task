@@ -1,4 +1,13 @@
-import { classify, Deferred, HttpError, isAuthError, Permanent, SQL, withQuota } from '@ryze/core';
+import {
+  classify,
+  type Db,
+  Deferred,
+  HttpError,
+  isAuthError,
+  Permanent,
+  SQL,
+  withQuota,
+} from '@ryze/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { type TestDb, testDb } from '../../../test/support/db.js';
 
@@ -78,5 +87,24 @@ describe('withQuota', () => {
     const bad = () => Promise.reject(new HttpError(422, 'invalid'));
     await withQuota(t.db, scope, 1, bad).catch(() => {});
     expect((await row()).failures).toBe(0);
+  });
+});
+
+describe('withQuota when the database stumbles after the call', () => {
+  it('keeps a successful (paid) result if closing the breaker fails', async () => {
+    const t = await testDb();
+    try {
+      await t.db.query(SQL.SITE_QUOTA, ['provider:paid', 10, 1]);
+      await t.db.query(`UPDATE quotas SET failures = 3 WHERE scope = 'provider:paid'`);
+      const flaky = {
+        query: (sql: string, params?: unknown[]) =>
+          sql === SQL.BREAKER_RESET
+            ? Promise.reject(new Error('db hiccup'))
+            : t.db.query(sql, params),
+      } as unknown as Db;
+      expect(await withQuota(flaky, 'provider:paid', 1, async () => 'paid')).toBe('paid');
+    } finally {
+      await t.drop();
+    }
   });
 });

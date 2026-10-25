@@ -184,7 +184,11 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
       log,
       signal: lease.signal,
     };
-    const run = () => r.steps[op.step](ctx);
+    const run = () => {
+      // An image step may have waited for IMAGE_CONCURRENCY past its lease: then it must not call.
+      if (lease.signal.aborted) throw new LeaseLost();
+      return r.steps[op.step](ctx);
+    };
     const result = IMAGE_STEPS.has(op.step) ? await r.imageLimit(run) : await run();
     if (lease.signal.aborted) throw new LeaseLost();
     const next = nextStep(op.step, r.imageKind);
@@ -229,9 +233,11 @@ async function settle<C>(
 }
 
 // RENEW every LEASE_SECONDS / 3 while the step runs; zero rows means the lease is gone: abort.
+// If renewals keep failing for a whole lease, it has expired anyway (another worker may have it).
 function keepLease<C>(r: Runner<C>, op: Operation, lease: AbortController, log: Logger) {
   let stopped = false;
   let timer: NodeJS.Timeout;
+  let heldAt = Date.now(); // the claim set the lease
   const tick = async () => {
     try {
       const held = await renew(r.db, op, r.leaseSeconds);
@@ -240,9 +246,13 @@ function keepLease<C>(r: Runner<C>, op: Operation, lease: AbortController, log: 
         lease.abort(new LeaseLost());
         return;
       }
+      heldAt = Date.now();
     } catch (err) {
-      // A database hiccup: try again next tick. If the lease really ran out, RENEW will say so.
       log.warn({ err: describe(err) }, 'lease renewal failed');
+      if (Date.now() - heldAt >= r.leaseSeconds * 1000) {
+        lease.abort(new LeaseLost());
+        return;
+      }
     }
     if (!stopped) timer = setTimeout(tick, (r.leaseSeconds * 1000) / 3);
   };

@@ -9,13 +9,13 @@ import { coverKey } from '../store.js';
 export const upload: StepFn<Clients> = async ({ article, site, clients }) => {
   const adapter = clients.adapters[site.platform];
   const filename = `ryze-${article.id}.jpg`;
-  const bytes = await clients.store.get(coverKey(article.id));
   const mediaId = await withQuota(
     clients.db,
     `site:${site.id}`,
     2,
     async () =>
-      (await adapter.findMedia(site, filename)) ?? adapter.uploadMedia(site, filename, bytes),
+      (await adapter.findMedia(site, filename)) ??
+      adapter.uploadMedia(site, filename, await clients.store.get(coverKey(article.id))),
   );
   return { write: { sql: SQL.WRITE_MEDIA, params: [article.id, mediaId] } };
 };

@@ -190,3 +190,52 @@ describe.each(['wordpress', 'shopify'] as const)(
     });
   },
 );
+
+describe('upload', () => {
+  it('reuses an uploaded cover without reading it from the store again', async () => {
+    const s = await site('wordpress');
+    const articleId = crypto.randomUUID();
+    const mediaId = await adapters.wordpress.uploadMedia(
+      s,
+      `ryze-${articleId}.jpg`,
+      Buffer.from('cover'),
+    );
+    let reads = 0;
+    const store: Store = {
+      exists: async () => true,
+      put: async () => {},
+      get: async () => {
+        reads++;
+        return Buffer.from('cover');
+      },
+    };
+    const out = await upload({
+      op: {
+        id: 1,
+        article_id: articleId,
+        step: 'upload',
+        status: 'running',
+        attempts: 1,
+        lease_version: 2,
+        provider_ref: null,
+      },
+      article: {
+        id: articleId,
+        site_id: s.id,
+        brief: 'b',
+        title: 't',
+        slug: 's',
+        body_html: '<p>b</p>',
+        image_prompt: 'p',
+        remote_media_id: null,
+        remote_post_id: null,
+      },
+      site: { ...s, verified_at: null },
+      clients: { db: t.db, http, store, adapters } as unknown as Clients,
+      log: createLogger('test', 'silent'),
+      signal: new AbortController().signal,
+    });
+    expect(out.write?.params[1]).toBe(mediaId);
+    expect(reads).toBe(0);
+  });
+});

@@ -64,7 +64,9 @@ export async function withQuota<T>(
   }
   try {
     const out = await fn();
-    if (probe || failures > 0) await db.query(SQL.BREAKER_RESET, [scope]);
+    // Best effort: losing this write only delays closing the breaker, while throwing here would
+    // turn a call that already succeeded (and was paid for) into a retry.
+    if (probe || failures > 0) await db.query(SQL.BREAKER_RESET, [scope]).catch(() => {});
     return out;
   } catch (err) {
     if (err instanceof HttpError && err.status === 429) {

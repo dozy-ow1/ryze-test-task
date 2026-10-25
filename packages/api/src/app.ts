@@ -14,13 +14,15 @@ const siteBody = z.object({
   base_url: z.url(),
   token: z.string().min(1),
 });
+// Postgres prints uuids in lowercase; normalize so ids compare as the database returns them.
+const uuid = z.uuid().transform((v) => v.toLowerCase());
 const articleItem = z.object({
-  site_id: z.uuid(),
+  site_id: uuid,
   brief: z.string().min(1),
   idempotency_key: z.string().min(1).max(200),
 });
 const bulkBody = z.object({ items: z.array(articleItem).min(1).max(1000) });
-const idParam = z.object({ id: z.uuid() });
+const idParam = z.object({ id: uuid });
 
 class HttpProblem extends Error {
   constructor(
@@ -55,7 +57,10 @@ const DB_DOWN_CODES = new Set([
 export function isDbUnavailable(err: unknown): boolean {
   const e = err as { code?: string; message?: string; errors?: unknown[] };
   if (e?.code && DB_DOWN_CODES.has(e.code)) return true;
-  if (/Connection terminated|timeout exceeded when trying to connect/i.test(e?.message ?? '')) {
+  const message = e?.message ?? '';
+  if (
+    /Connection terminated|not queryable|timeout exceeded when trying to connect/i.test(message)
+  ) {
     return true;
   }
   return Array.isArray(e?.errors) && e.errors.some(isDbUnavailable);
@@ -121,6 +126,12 @@ export function buildApp(opts: { db: Db; siteTokenKey: string; logLevel?: string
 
   app.post('/articles', async (req, reply) => {
     const item = parse(articleItem, req.body);
+    // A repeated key answers with its article, whatever happened to the site since.
+    const known = await db.query<{ id: string }>(SQL.INTAKE_EXISTING, [
+      item.site_id,
+      item.idempotency_key,
+    ]);
+    if (known.rows[0]) return reply.code(200).send({ article_id: known.rows[0].id });
     await requireActiveSites(db, [item.site_id]);
     const { id, created } = await tx(db, async (c) => {
       const params = [item.site_id, item.idempotency_key, item.brief];
@@ -141,11 +152,18 @@ export function buildApp(opts: { db: Db; siteTokenKey: string; logLevel?: string
       db,
       items.map((i) => i.site_id),
     );
-    const siteIds = items.map((i) => i.site_id);
-    const keys = items.map((i) => i.idempotency_key);
+    // Rows go in in key order: two bulk requests with overlapping keys then lock them in the same
+    // order and cannot deadlock.
+    const ordered = [...items].sort((a, b) => {
+      const x = `${a.site_id}|${a.idempotency_key}`;
+      const y = `${b.site_id}|${b.idempotency_key}`;
+      return x < y ? -1 : x > y ? 1 : 0;
+    });
+    const siteIds = ordered.map((i) => i.site_id);
+    const keys = ordered.map((i) => i.idempotency_key);
     const results = await tx(db, async (c) => {
       type Row = { id: string; site_id: string; idempotency_key: string };
-      const briefs = items.map((i) => i.brief);
+      const briefs = ordered.map((i) => i.brief);
       const inserted = await c.query<Row>(SQL.BULK_INTAKE, [siteIds, keys, briefs]);
       if (inserted.rowCount) {
         await c.query(SQL.BULK_INTAKE_OPS, [inserted.rows.map((r) => r.id)]);

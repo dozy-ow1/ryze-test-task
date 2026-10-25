@@ -1,7 +1,7 @@
 import { createPool, decryptToken, SQL } from '@ryze/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type TestDb, testDb } from '../../../test/support/db.js';
-import { buildApp } from '../src/app.js';
+import { buildApp, isDbUnavailable } from '../src/app.js';
 
 const KEY = Buffer.alloc(32, 7).toString('base64');
 let t: TestDb;
@@ -242,5 +242,62 @@ describe('database unavailable', () => {
     await fragile.close();
     await flaky.end();
     await killer.end();
+  });
+});
+
+describe('review fixes', () => {
+  it('accepts an uppercase site id', async () => {
+    const siteId = (await site()).toUpperCase();
+    const one = await app.inject({
+      method: 'POST',
+      url: '/articles',
+      payload: { site_id: siteId, brief: 'b', idempotency_key: 'upper-1' },
+    });
+    expect(one.statusCode).toBe(202);
+    const bulk = await app.inject({
+      method: 'POST',
+      url: '/articles/bulk',
+      payload: { items: [{ site_id: siteId, brief: 'b', idempotency_key: 'upper-2' }] },
+    });
+    expect(bulk.json().results[0].article_id).toEqual(expect.any(String));
+  });
+
+  it('answers a repeated key with its article even after the site was disabled', async () => {
+    const siteId = await site();
+    const payload = { site_id: siteId, brief: 'b', idempotency_key: 'disabled-later' };
+    const first = await app.inject({ method: 'POST', url: '/articles', payload });
+    await t.db.query(`UPDATE sites SET status = 'auth_failed' WHERE id = $1`, [siteId]);
+    const again = await app.inject({ method: 'POST', url: '/articles', payload });
+    expect(again.statusCode).toBe(200);
+    expect(again.json().article_id).toBe(first.json().article_id);
+  });
+
+  it('does not deadlock two bulk requests with the same keys in opposite orders', async () => {
+    const siteId = await site();
+    for (let round = 0; round < 10; round++) {
+      const items = Array.from({ length: 50 }, (_, n) => ({
+        site_id: siteId,
+        brief: 'b',
+        idempotency_key: `race-${round}-${n}`,
+      }));
+      const [a, b] = await Promise.all([
+        app.inject({ method: 'POST', url: '/articles/bulk', payload: { items } }),
+        app.inject({
+          method: 'POST',
+          url: '/articles/bulk',
+          payload: { items: [...items].reverse() },
+        }),
+      ]);
+      expect([a.statusCode, b.statusCode]).toEqual([202, 202]);
+      const ids = (r: typeof a) =>
+        r.json().results.map((x: { article_id: string }) => x.article_id);
+      expect(ids(b)).toEqual([...ids(a)].reverse());
+    }
+  });
+
+  it('maps a client that lost its connection to 503', () => {
+    const err = new Error('Client has encountered a connection error and is not queryable');
+    expect(isDbUnavailable(err)).toBe(true);
+    expect(isDbUnavailable(new Error('syntax error at or near'))).toBe(false);
   });
 });
