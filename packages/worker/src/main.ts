@@ -2,16 +2,34 @@ import { parseArgs } from 'node:util';
 import { createLogger, createPool, loadConfig, workerConfig } from '@ryze/core';
 import pLimit from 'p-limit';
 import { createClients } from './clients.js';
+import { reconcile } from './reconcile.js';
 import { type PoolName, runPool } from './runner.js';
+import { draft } from './steps/draft.js';
 import { imageFetch } from './steps/image_fetch.js';
 import { imageSubmit } from './steps/image_submit.js';
-import { stubSteps } from './steps/stub.js';
+import { publish } from './steps/publish.js';
 import { text } from './steps/text.js';
+import { upload } from './steps/upload.js';
+import { verify } from './steps/verify.js';
 
 // One binary: --pool=generate|publish runs a step pool; --mode=reconcile runs the reconciler once.
 const { values } = parseArgs({ options: { pool: { type: 'string' }, mode: { type: 'string' } } });
 const config = loadConfig(workerConfig);
 const log = createLogger('worker', config.LOG_LEVEL);
+
+if (values.mode === 'reconcile') {
+  const db = createPool(config.DATABASE_URL, 2);
+  const report = await reconcile({
+    db,
+    clients: createClients(config, db),
+    log: log.child({ mode: 'reconcile' }),
+    siteTokenKey: config.SITE_TOKEN_KEY,
+    fakePlatformsUrl: config.FAKE_PLATFORMS_URL,
+  });
+  console.log(JSON.stringify(report));
+  await db.end();
+  process.exit(0);
+}
 
 const pool = values.pool ?? config.POOL;
 if (pool !== 'generate' && pool !== 'publish') {
@@ -36,8 +54,15 @@ await runPool(
   {
     db,
     log: log.child({ pool: name }),
-    // verify, upload, draft and publish need the platform adapters (milestone 5).
-    steps: { ...stubSteps, text, image_submit: imageSubmit, image_fetch: imageFetch },
+    steps: {
+      verify,
+      text,
+      image_submit: imageSubmit,
+      image_fetch: imageFetch,
+      upload,
+      draft,
+      publish,
+    },
     clients: createClients(config, db),
     siteTokenKey: config.SITE_TOKEN_KEY,
     leaseSeconds,

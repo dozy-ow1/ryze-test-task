@@ -114,6 +114,18 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      fake-platforms:
+        condition: service_healthy
+
+  reconciler:
+    <<: *worker
+    command: ["sh", "-c", "while true; do node dist/main.js --mode=reconcile; sleep 60; done"]
+    restart: unless-stopped
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
   fake-providers:
     build:
@@ -134,6 +146,24 @@ services:
       timeout: 3s
       retries: 30
 
+  fake-platforms:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        PKG: fake-platforms
+    image: ryze-fake-platforms
+    env_file: .env
+    environment:
+      PORT: 8092
+    ports:
+      - "8092:8092"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8092/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
 
 volumes:
   pgdata:

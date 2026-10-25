@@ -6,7 +6,10 @@ import {
   type Http,
   type ImageProvider,
   type LlmProvider,
+  type PlatformAdapter,
+  shopify,
   type WorkerConfig,
+  wordpress,
 } from '@ryze/core';
 import { type Store, s3Store } from './store.js';
 
@@ -17,6 +20,7 @@ export interface Clients {
   llm: LlmProvider;
   image: ImageProvider;
   store: Store;
+  adapters: Record<'wordpress' | 'shopify', PlatformAdapter>;
 }
 
 export function createClients(config: WorkerConfig, db: Db): Clients {
@@ -27,5 +31,6 @@ export function createClients(config: WorkerConfig, db: Db): Clients {
     llm: fakeLlm(http, config.LLM_BASE_URL as string),
     image: fakeImage(http, config.IMAGE_BASE_URL as string),
     store: s3Store(config),
+    adapters: { wordpress: wordpress(http), shopify: shopify(http) },
   };
 }

@@ -75,6 +75,7 @@ function ctx(clients: Partial<Clients>, op: Partial<Operation> = {}): StepContex
       llm: { model: 'fake', generate: vi.fn() },
       image: { kind: 'async' },
       store: memoryStore(),
+      adapters: {} as Clients['adapters'],
       ...clients,
     },
     log: createLogger('test', 'silent'),
