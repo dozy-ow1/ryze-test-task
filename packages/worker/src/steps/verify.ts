@@ -9,10 +9,13 @@ export const verify: StepFn<Clients> = async ({ site, clients, signal }) => {
   if (site.verified_at && Date.now() - site.verified_at.getTime() < FRESH_MS) {
     return {};
   }
-  const adapter = clients.adapters[site.platform];
+
+  const adapter = clients.platform;
   await withQuota(clients.db, `site:${site.id}`, 1, () => {
     signal.throwIfAborted();
+
     return adapter.verify(site, signal);
   });
+
   return { write: { sql: SQL.WRITE_VERIFIED, params: [site.id, site.tokenVersion ?? null] } };
 };

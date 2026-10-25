@@ -10,8 +10,10 @@ const ESTIMATED_TOKENS = 4000;
 export const text: StepFn<Clients> = async ({ article, clients, signal }) => {
   const out = await withQuota(clients.db, 'provider:llm', ESTIMATED_TOKENS, () => {
     signal.throwIfAborted();
+
     return clients.llm.generate({ brief: article.brief }, signal);
   });
+
   return {
     usage: textUsage(out.model ?? clients.llm.model, out.usage),
     write: {
@@ -37,5 +39,6 @@ export function slugify(title: string, articleId: string): string {
     .replace(/^-+/, '')
     .slice(0, 43)
     .replace(/-+$/, '');
+
   return `${base || 'article'}-${articleId}`;
 }

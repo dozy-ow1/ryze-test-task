@@ -3,15 +3,14 @@ name: ryze
 x-worker: &worker
   build:
     context: .
-    dockerfile: deploy/docker/Dockerfile
     args:
       PKG: worker
   image: ryze-worker
   env_file: .env
-  environment: &worker-environment
-    LLM_BASE_URL: ${LLM_BASE_URL:-http://fake-providers:8091}
-    IMAGE_BASE_URL: ${IMAGE_BASE_URL:-http://fake-providers:8091}
-    FAKE_PLATFORMS_URL: ${FAKE_PLATFORMS_URL:-http://fake-platforms:8092}
+  environment:
+    LLM_BASE_URL: ${LLM_BASE_URL:-http://mock-providers:8091}
+    IMAGE_BASE_URL: ${IMAGE_BASE_URL:-http://mock-providers:8091}
+    MOCK_WORDPRESS_URL: ${MOCK_WORDPRESS_URL:-http://mock-wordpress:8092}
   # node is not PID 1, so a SIGKILL to it ends the container the way a crash does and the restart
   # policy brings it back (`docker kill` counts as a manual stop and would not be restarted).
   init: true
@@ -71,7 +70,6 @@ services:
   api:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile
       args:
         PKG: api
     image: ryze-api
@@ -99,7 +97,7 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      fake-providers:
+      mock-providers:
         condition: service_healthy
 
   worker-publish:
@@ -113,7 +111,7 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      fake-platforms:
+      mock-wordpress:
         condition: service_healthy
 
   reconciler:
@@ -124,13 +122,12 @@ services:
       migrate:
         condition: service_completed_successfully
 
-  fake-providers:
+  mock-providers:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile
       args:
-        PKG: fake-providers
-    image: ryze-fake-providers
+        PKG: mock-providers
+    image: ryze-mock-providers
     env_file: .env
     environment:
       PORT: 8091
@@ -143,13 +140,12 @@ services:
       timeout: 3s
       retries: 30
 
-  fake-platforms:
+  mock-wordpress:
     build:
       context: .
-      dockerfile: deploy/docker/Dockerfile
       args:
-        PKG: fake-platforms
-    image: ryze-fake-platforms
+        PKG: mock-wordpress
+    image: ryze-mock-wordpress
     env_file: .env
     environment:
       PORT: 8092

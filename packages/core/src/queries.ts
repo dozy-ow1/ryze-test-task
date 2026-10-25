@@ -94,11 +94,6 @@ export const SQL = {
   QUOTA_DRAIN: `
     UPDATE quotas SET tokens = 0, tokens_at = GREATEST(tokens_at, now() + make_interval(secs => $2))
     WHERE scope = $1`,
-  QUOTA_SET: `
-    UPDATE quotas
-    SET tokens = LEAST(tokens, capacity, GREATEST(0, $2)),
-        tokens_at = GREATEST(tokens_at, now())
-    WHERE scope = $1`,
   BREAKER_PROBE: `
     UPDATE quotas SET open_until = now() + interval '30 seconds'
     WHERE scope = $1 AND failures >= 5 AND open_until <= now()

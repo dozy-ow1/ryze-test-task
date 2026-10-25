@@ -40,6 +40,7 @@ export function createPool(connectionString: string, max = 10): pg.Pool {
   const pool = new pg.Pool({ connectionString, max, connectionTimeoutMillis: 5_000 });
   // An idle client losing its connection must not crash the process; the next checkout reconnects.
   pool.on('error', () => {});
+
   return pool;
 }
 
@@ -48,22 +49,27 @@ export async function transaction<T>(
   fn: (client: pg.PoolClient) => Promise<T>,
 ): Promise<T> {
   const client = await db.connect();
+
   let broken: Error | undefined;
+
   // A checked-out client whose connection dies emits 'error'; unhandled, that would crash the
   // process. Record it instead: the pending query fails and the client is discarded on release.
   const onError = (err: Error) => {
     broken = err;
   };
   client.on('error', onError);
+
   try {
     await client.query('BEGIN');
     const out = await fn(client);
     await client.query('COMMIT');
+
     return out;
   } catch (err) {
     await client.query('ROLLBACK').catch((e: Error) => {
       broken = e;
     });
+
     throw err;
   } finally {
     client.off('error', onError);
@@ -79,11 +85,13 @@ export async function claim(
   maxAttempts: number,
 ): Promise<Operation[]> {
   const { rows } = await db.query<Operation>(SQL.CLAIM, [steps, leaseSeconds, limit, maxAttempts]);
+
   return rows;
 }
 
 export async function renew(db: pg.Pool, op: Operation, leaseSeconds: number): Promise<boolean> {
   const r = await db.query(SQL.RENEW, [op.id, op.lease_version, leaseSeconds]);
+
   return r.rowCount === 1;
 }
 
@@ -99,15 +107,19 @@ export interface Completion {
 export async function complete(db: pg.Pool, op: Operation, c: Completion): Promise<boolean> {
   return transaction(db, async (client) => {
     const done = await client.query(SQL.COMPLETE, [op.id, op.lease_version, c.usage ?? null]);
+
     if (done.rowCount !== 1) {
       return false;
     }
+
     if (c.write) {
       await client.query(c.write.sql, c.write.params);
     }
+
     if (c.next) {
       await client.query(SQL.NEXT, [op.article_id, c.next.step, c.next.providerRef ?? null]);
     }
+
     return true;
   });
 }
@@ -119,11 +131,13 @@ export async function retry(
   error: string,
 ): Promise<boolean> {
   const r = await db.query(SQL.RETRY, [op.id, op.lease_version, delaySeconds, error]);
+
   return r.rowCount === 1;
 }
 
 export async function defer(db: pg.Pool, op: Operation, until: Date): Promise<boolean> {
   const r = await db.query(SQL.DEFER, [op.id, op.lease_version, until]);
+
   return r.rowCount === 1;
 }
 
@@ -137,12 +151,15 @@ export async function fail(
 ): Promise<boolean> {
   return transaction(db, async (client) => {
     const r = await client.query(SQL.FAIL, [op.id, op.lease_version, error]);
+
     if (r.rowCount !== 1) {
       return false;
     }
+
     if (authFailedSiteId) {
       await client.query(SQL.SITE_AUTH_FAILED, [authFailedSiteId, expectedToken ?? null]);
     }
+
     return true;
   });
 }

@@ -6,7 +6,9 @@ import { z } from 'zod';
 const logLevel = z
   .enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent'])
   .default('info');
+
 const positiveInt = z.coerce.number().int().positive();
+
 const siteTokenKey = z
   .string()
   .refine((v) => Buffer.from(v, 'base64').length === 32, 'must be 32 bytes, base64-encoded');
@@ -33,15 +35,15 @@ export const workerConfig = z
     S3_BUCKET: z.string().min(1),
     S3_ACCESS_KEY: z.string().min(1),
     S3_SECRET_KEY: z.string().min(1),
-    LLM_PROVIDER: z.enum(['fake', 'anthropic']).default('fake'),
-    IMAGE_PROVIDER: z.enum(['fake', 'openai']).default('fake'),
+    LLM_PROVIDER: z.enum(['mock', 'anthropic']).default('mock'),
+    IMAGE_PROVIDER: z.enum(['mock', 'openai']).default('mock'),
     LLM_BASE_URL: z.url().optional(),
     IMAGE_BASE_URL: z.url().optional(),
     ANTHROPIC_API_KEY: z.string().optional(),
     ANTHROPIC_MODEL: z.string().default('claude-sonnet-5-5'),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_IMAGE_MODEL: z.string().default('gpt-image-1'),
-    FAKE_PLATFORMS_URL: z.url().optional(),
+    MOCK_WORDPRESS_URL: z.url().optional(),
     LOG_LEVEL: logLevel,
   })
   .superRefine((c, ctx) => {
@@ -50,21 +52,25 @@ export const workerConfig = z
         ctx.addIssue({ code: 'custom', path: [key], message: `required when ${when}` });
       }
     };
-    if (c.LLM_PROVIDER === 'fake') {
-      need('LLM_BASE_URL', 'LLM_PROVIDER=fake');
+
+    if (c.LLM_PROVIDER === 'mock') {
+      need('LLM_BASE_URL', 'LLM_PROVIDER=mock');
     }
+
     if (c.LLM_PROVIDER === 'anthropic') {
       need('ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic');
     }
-    if (c.IMAGE_PROVIDER === 'fake') {
-      need('IMAGE_BASE_URL', 'IMAGE_PROVIDER=fake');
+
+    if (c.IMAGE_PROVIDER === 'mock') {
+      need('IMAGE_BASE_URL', 'IMAGE_PROVIDER=mock');
     }
+
     if (c.IMAGE_PROVIDER === 'openai') {
       need('OPENAI_API_KEY', 'IMAGE_PROVIDER=openai');
     }
   });
 
-export const fakeConfig = z.object({
+export const mockConfig = z.object({
   PORT: positiveInt,
   FAULT_RATE: z.coerce.number().min(0).max(1).default(0),
   FAULT_KINDS: z
@@ -89,9 +95,11 @@ export function loadConfig<T extends z.ZodType>(
   // Compose passes `KEY=` as an empty string; treat it as unset.
   const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
   const parsed = schema.safeParse(set);
+
   if (parsed.success) {
     return parsed.data;
   }
+
   const lines = parsed.error.issues.map((i) => `  ${i.path.join('.') || '(env)'}: ${i.message}`);
   console.error(`Invalid configuration:\n${lines.join('\n')}`);
   process.exit(1);

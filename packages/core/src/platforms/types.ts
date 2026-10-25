@@ -1,7 +1,7 @@
 // A customer site as the adapters see it: the token is decrypted and must never be logged.
 export interface Site {
   id: string;
-  platform: 'wordpress' | 'shopify';
+  platform: 'wordpress';
   base_url: string;
   token: string;
 }
@@ -19,10 +19,9 @@ export interface DraftInput {
   bodyHtml: string;
   mediaId: string;
   articleId: string;
-  image: () => Promise<Buffer>; // the cover bytes, for platforms that take the image inline
 }
 
-// One module per platform, selected by site.platform. Every lookup method is how a retry finds
+// The platform implementation is injected by the worker factory. Every lookup lets a retry find
 // what an earlier attempt already did: by file name, by slug, by post id.
 export interface PlatformAdapter {
   verify(site: Site, signal?: AbortSignal): Promise<void>;

@@ -1,19 +1,4 @@
-import {
-  createAnthropic,
-  createFakeImage,
-  createFakeText,
-  createHttp,
-  createOpenAI,
-  createShopify,
-  createWordPress,
-  type Database,
-  type Http,
-  type ImageProvider,
-  type PlatformAdapter,
-  SQL,
-  type TextProvider,
-  type WorkerConfig,
-} from '@ryze/core';
+import { createAnthropic, createHttp, createMockImage, createMockText, createOpenAI, createWordPress, type Database, type Http, type ImageProvider, type PlatformAdapter, type TextProvider, type WorkerConfig } from '@ryze/core';
 import { GENERATION_TIMEOUT_MS, HTTP_TIMEOUT_MS } from './settings.js';
 import { type Store, s3Store } from './store.js';
 
@@ -24,39 +9,37 @@ export interface Clients {
   llm: TextProvider;
   image: ImageProvider;
   store: Store;
-  adapters: Record<'wordpress' | 'shopify', PlatformAdapter>;
+  platform: PlatformAdapter;
 }
 
 export function createClients(config: WorkerConfig, db: Database): Clients {
   const http = createHttp(HTTP_TIMEOUT_MS, {
-    allowedHosts: ['fake-providers', 'fake-platforms'],
+    allowedHosts: ['mock-providers', 'mock-wordpress'],
   });
-  const generationTimeout = GENERATION_TIMEOUT_MS;
+
   const llm =
     config.LLM_PROVIDER === 'anthropic'
       ? createAnthropic({
           apiKey: config.ANTHROPIC_API_KEY as string,
           model: config.ANTHROPIC_MODEL,
-          timeoutMs: generationTimeout,
+          timeoutMs: GENERATION_TIMEOUT_MS,
         })
-      : createFakeText(http, config.LLM_BASE_URL as string);
+      : createMockText(http, config.LLM_BASE_URL as string);
+
   const image =
     config.IMAGE_PROVIDER === 'openai'
-      ? createOpenAI(createHttp(generationTimeout), {
+      ? createOpenAI(createHttp(GENERATION_TIMEOUT_MS), {
           apiKey: config.OPENAI_API_KEY as string,
           model: config.OPENAI_IMAGE_MODEL,
         })
-      : createFakeImage(http, config.IMAGE_BASE_URL as string);
-  // A real Shopify store reports its bucket on every answer; keep the site's quota row in line.
-  const followShopify = async (site: { id: string }, available: number) => {
-    await db.query(SQL.QUOTA_SET, [`site:${site.id}`, available]);
-  };
+      : createMockImage(http, config.IMAGE_BASE_URL as string);
+
   return {
     db,
     http,
     llm,
     image,
     store: s3Store(config),
-    adapters: { wordpress: createWordPress(http), shopify: createShopify(http, followShopify) },
+    platform: createWordPress(http),
   };
 }

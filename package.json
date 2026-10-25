@@ -9,8 +9,8 @@
   "scripts": {
     "build": "pnpm -r build",
     "typecheck": "pnpm -r build && tsc -p tsconfig.json",
-    "lint": "biome check .",
-    "format": "biome check --write .",
+    "lint": "biome lint . && tsx scripts/style.ts",
+    "format": "biome check --write --formatter-enabled=false . && tsx scripts/style.ts --write",
     "test": "vitest run",
     "migrate": "tsx scripts/migrate.ts",
     "seed": "tsx scripts/seed.ts",

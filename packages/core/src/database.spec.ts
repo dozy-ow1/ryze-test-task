@@ -1,18 +1,7 @@
 import { randomUUID } from 'node:crypto';
-import {
-  claim,
-  complete,
-  createPool,
-  defer,
-  fail,
-  type Operation,
-  renew,
-  retry,
-  SQL,
-  type Step,
-} from '@ryze/core';
+import { claim, complete, createPool, defer, fail, type Operation, renew, retry, SQL, type Step } from '@ryze/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../test/support/database.js';
+import { type TestDb, testDb } from '../testing/database.js';
 
 // Queue recovery and concurrency against real PostgreSQL, including two claimers racing.
 
@@ -35,18 +24,22 @@ beforeEach(async () => {
 
 async function article(): Promise<string> {
   const { rows } = await t.db.query(SQL.INTAKE, [siteId, randomUUID(), 'brief']);
+
   return rows[0].id;
 }
 
 async function op(step: Step, extra = ''): Promise<number> {
   const id = await article();
+
   const { rows } = await t.db.query(
     `INSERT INTO operations (article_id, step) VALUES ($1, $2) RETURNING id`,
     [id, step],
   );
+
   if (extra) {
     await t.db.query(`UPDATE operations SET ${extra} WHERE id = $1`, [rows[0].id]);
   }
+
   return rows[0].id;
 }
 
@@ -57,12 +50,14 @@ const row = async (id: number) =>
       [id],
     )
   ).rows[0];
+
 const expire = (id: number) =>
   t.db.query(`UPDATE operations SET due_at = now() - interval '1 second' WHERE id = $1`, [id]);
 
 describe('intake', () => {
   it('creates nothing for a repeated idempotency key', async () => {
     const first = await t.db.query(SQL.INTAKE, [siteId, 'k1', 'brief']);
+
     const again = await t.db.query(SQL.INTAKE, [siteId, 'k1', 'other brief']);
     expect(first.rowCount).toBe(1);
     expect(again.rowCount).toBe(0);
@@ -87,21 +82,28 @@ describe('claim', () => {
 
   it('never hands the same row to two concurrent claimers', async () => {
     const ids = new Set<number>();
+
     for (let i = 0; i < 200; i++) {
       ids.add(await op('upload'));
     }
+
     const a = createPool(t.url, 4);
     const b = createPool(t.url, 4);
+
     const drain = async (db: typeof a) => {
       const mine: number[] = [];
+
       for (;;) {
         const got = await claim(db, PUBLISH, 60, 7, 8);
+
         if (got.length === 0) {
           return mine;
         }
+
         mine.push(...got.map((o) => o.id));
       }
     };
+
     const [fromA, fromB] = await Promise.all([drain(a), drain(b)]);
     await Promise.all([a.end(), b.end()]);
     expect(fromA.length).toBeGreaterThan(0);
@@ -114,7 +116,9 @@ describe('claim', () => {
 describe('guarded completion', () => {
   it('commits status, columns and the next row together, once, for the current lease', async () => {
     const id = await op('upload');
+
     const [claimed] = await claim(t.db, PUBLISH, 60, 1, 8);
+
     const write = { sql: SQL.WRITE_MEDIA, params: [claimed.article_id, 'media-1'] };
     const stale: Operation = { ...claimed, lease_version: claimed.lease_version - 1 };
     expect(await complete(t.db, stale, { write, next: { step: 'draft' } })).toBe(false);
@@ -139,6 +143,7 @@ describe('guarded completion', () => {
 describe('lease expiry', () => {
   it('reclaims an expired lease: attempts + 1, new lease, provider_ref kept', async () => {
     const id = await op('image_fetch', `provider_ref = 'job-1'`);
+
     const [first] = await claim(t.db, GENERATE, 120, 1, 8);
     await expire(id);
     const [second] = await claim(t.db, GENERATE, 120, 1, 8);
@@ -168,7 +173,9 @@ describe('lease expiry', () => {
 describe('retry, defer, fail and the retry endpoint', () => {
   it('follow their semantics', async () => {
     const id = await op('image_fetch');
+
     let [o] = await claim(t.db, GENERATE, 120, 1, 8);
+
     const until = new Date(Date.now() + 5_000);
     expect(await defer(t.db, o, until)).toBe(true);
     let r = await row(id);
@@ -199,6 +206,7 @@ describe('retry, defer, fail and the retry endpoint', () => {
 describe('quota and breaker statements', () => {
   const take = async (scope: string, units: number) =>
     (await t.db.query(SQL.QUOTA_TAKE, [scope, units])).rows[0];
+
   const quota = async (scope: string) =>
     (await t.db.query('SELECT * FROM quotas WHERE scope = $1', [scope])).rows[0];
 
@@ -222,9 +230,11 @@ describe('quota and breaker statements', () => {
 
   it('breaker: opens on the fifth failure, lets one probe through, closes on success', async () => {
     await t.db.query(SQL.SITE_QUOTA, ['provider:x', 10, 2]);
+
     for (let i = 0; i < 4; i++) {
       await t.db.query(SQL.BREAKER_FAILURE, ['provider:x']);
     }
+
     expect((await quota('provider:x')).open_until).toBeNull();
     await t.db.query(SQL.BREAKER_FAILURE, ['provider:x']);
     const refused = await take('provider:x', 1);

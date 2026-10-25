@@ -1,4 +1,4 @@
-// Identical for the fake and the real provider. An async provider takes a job and is polled for
+// Identical for the mock and the real provider. An async provider takes a job and is polled for
 // it; a sync one returns the image from one call (the pipeline then has no image_submit step).
 export interface ImageProvider {
   kind: 'async' | 'sync';

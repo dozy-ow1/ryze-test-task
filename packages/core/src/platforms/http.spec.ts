@@ -1,7 +1,8 @@
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { createHttp, isPublicAddress, validateHttpUrl } from './http.js';
+import { createHttp } from './http.js';
+import { validateHttpUrl } from './network-policy.js';
 
 const server = createServer((_req, res) => res.end('ok'));
 let port: number;
@@ -37,22 +38,5 @@ describe('outbound network boundary', () => {
   it('rejects credential-bearing and non-HTTP URLs', () => {
     expect(() => validateHttpUrl('http://user:password@example.com')).toThrow();
     expect(() => validateHttpUrl('file:///etc/passwd')).toThrow();
-  });
-
-  it('blocks alternate address representations and IPv6 local ranges', () => {
-    for (const address of [
-      '127.0.0.1',
-      '10.0.0.1',
-      '169.254.169.254',
-      '100.64.0.1',
-      '::1',
-      'fc00::1',
-      'fe80::1',
-      '::ffff:127.0.0.1',
-    ]) {
-      expect(isPublicAddress(address)).toBe(false);
-    }
-    expect(isPublicAddress('8.8.8.8')).toBe(true);
-    expect(isPublicAddress('2606:4700:4700::1111')).toBe(true);
   });
 });

@@ -30,8 +30,8 @@ describe('demo isolation', () => {
     const options = vi.mocked(execSync).mock.calls[0][1] as { input: string };
     const config = JSON.parse(options.input);
     expect(config.services.worker.environment).toMatchObject({
-      LLM_PROVIDER: 'fake',
-      IMAGE_PROVIDER: 'fake',
+      LLM_PROVIDER: 'mock',
+      IMAGE_PROVIDER: 'mock',
       DATABASE_URL: 'postgres://ryze:ryze@postgres:5432/ryze',
     });
     expect(options.input).not.toContain('real-key');

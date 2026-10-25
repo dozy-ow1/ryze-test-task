@@ -7,5 +7,10 @@
       "@ryze/core": ["./packages/core/src/index.ts"]
     }
   },
-  "include": ["scripts", "test", "packages/*/src/**/*.spec.ts", "vitest.config.ts"]
+  "include": [
+    "scripts",
+    "packages/*/src/**/*.spec.ts",
+    "packages/*/testing/**/*.ts",
+    "vitest.config.ts"
+  ]
 }

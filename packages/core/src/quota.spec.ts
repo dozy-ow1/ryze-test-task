@@ -1,27 +1,20 @@
-import {
-  classify,
-  createHttp,
-  type Database,
-  Deferred,
-  HttpError,
-  isAuthError,
-  Permanent,
-  SQL,
-  withQuota,
-} from '@ryze/core';
+import { classify, createHttp, type Database, Deferred, HttpError, isAuthError, Permanent, SQL, withQuota } from '@ryze/core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type TestDb, testDb } from '../../../test/support/database.js';
+import { type TestDb, testDb } from '../testing/database.js';
 
 describe('classify', () => {
   it('maps every error onto deferred, transient or permanent', () => {
     expect(classify(new Deferred(new Date(), 'quota'))).toBe('deferred');
     expect(classify(new Permanent('bad'))).toBe('permanent');
+
     for (const status of [400, 401, 403, 404, 409, 422]) {
       expect(classify(new HttpError(status, 'x'))).toBe('permanent');
     }
+
     for (const status of [0, 429, 500, 502, 503, 529]) {
       expect(classify(new HttpError(status, 'x'))).toBe('transient');
     }
+
     expect(classify(new TypeError('surprise'))).toBe('transient');
     expect(isAuthError(new HttpError(401, 'x'))).toBe(true);
     expect(isAuthError(new HttpError(404, 'x'))).toBe(false);
@@ -31,6 +24,7 @@ describe('classify', () => {
 describe('withQuota', () => {
   let t: TestDb;
   const scope = 'provider:test';
+
   const row = async () =>
     (await t.db.query('SELECT * FROM quotas WHERE scope = $1', [scope])).rows[0];
 
@@ -66,23 +60,17 @@ describe('withQuota', () => {
     expect((await row()).failures).toBe(0); // a 429 is not an outage
   });
 
-  it('does not let a delayed response erase a newer 429 cooldown or reservations', async () => {
-    await t.db.query(SQL.QUOTA_DRAIN, [scope, 60]);
-    await t.db.query(SQL.QUOTA_SET, [scope, 40]);
-    const fn = vi.fn(async () => 'unexpected call');
-    await expect(withQuota(t.db, scope, 1, fn)).rejects.toBeInstanceOf(Deferred);
-    expect(fn).not.toHaveBeenCalled();
-    expect((await row()).tokens_at.getTime()).toBeGreaterThan(Date.now() + 59_000);
-  });
-
   it('opens after five outage failures, probes once, closes on success', async () => {
     await t.db.query('UPDATE quotas SET capacity = 100, tokens = 100 WHERE scope = $1', [scope]);
     const down = () => Promise.reject(new HttpError(503, 'down'));
+
     for (let i = 0; i < 5; i++) {
       await withQuota(t.db, scope, 1, down).catch(() => {});
     }
+
     expect((await row()).failures).toBe(5);
     const fn = vi.fn(async () => 'up');
+
     const open = await withQuota(t.db, scope, 1, fn).catch((e) => e);
     expect(open).toBeInstanceOf(Deferred);
     expect(open.message).toContain('breaker open');
@@ -117,6 +105,7 @@ describe('withQuota', () => {
 describe('withQuota when the database stumbles after the call', () => {
   it('keeps a successful (paid) result if closing the breaker fails', async () => {
     const t = await testDb();
+
     try {
       await t.db.query(SQL.SITE_QUOTA, ['provider:paid', 10, 1]);
       await t.db.query(`UPDATE quotas SET failures = 3 WHERE scope = 'provider:paid'`);

@@ -2,7 +2,7 @@ import { copyFile, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, beforeEach, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../test/support/database.js';
+import { type TestDb, testDb } from '../packages/core/testing/database.js';
 import { migrate } from './migrate.js';
 
 let database: TestDb;
@@ -15,6 +15,7 @@ beforeEach(async () => {
 });
 afterEach(async () => {
   await database?.drop();
+
   if (directory) {
     await rm(directory, { recursive: true, force: true });
   }

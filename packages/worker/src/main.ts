@@ -20,12 +20,13 @@ const log = createLogger('worker', config.LOG_LEVEL);
 
 if (values.mode === 'reconcile') {
   const db = createPool(config.DATABASE_URL, 2);
+
   const report = await reconcile({
     db,
     clients: createClients(config, db),
     log: log.child({ mode: 'reconcile' }),
     siteTokenKey: config.SITE_TOKEN_KEY,
-    fakePlatformsUrl: config.FAKE_PLATFORMS_URL,
+    mockWordPressUrl: config.MOCK_WORDPRESS_URL,
   });
   console.log(JSON.stringify(report));
   await db.end();
@@ -33,15 +34,18 @@ if (values.mode === 'reconcile') {
 }
 
 const pool = values.pool;
+
 if (pool !== 'generate' && pool !== 'publish') {
   console.error('worker: pass --pool=generate|publish');
   process.exit(1);
 }
+
 const name: PoolName = pool;
 const { concurrency, leaseSeconds } = POOL_LIMITS[name];
 const db = createPool(config.DATABASE_URL, concurrency + 4);
 
 const stop = new AbortController();
+
 for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   process.once(signal, () => {
     log.info({ signal }, 'stop claiming');

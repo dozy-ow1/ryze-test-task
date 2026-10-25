@@ -4,8 +4,8 @@ import { randomBytes } from 'node:crypto';
 export const API = 'http://localhost:8080';
 export const PROVIDERS = 'http://localhost:8091';
 export const PLATFORMS = 'http://localhost:8092';
-// How the workers reach the fake platforms from inside Compose.
-const PLATFORMS_IN_COMPOSE = 'http://fake-platforms:8092';
+// How the workers reach the mock platforms from inside Compose.
+const PLATFORMS_IN_COMPOSE = 'http://mock-wordpress:8092';
 
 export const ALL_FAULTS = ['429', '500', 'timeout', 'slow', 'complete_then_drop'];
 
@@ -20,36 +20,38 @@ export async function call<T = Record<string, unknown>>(
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
+
   const text = await res.text();
+
   if (res.status >= 400) {
     throw new Error(`${method} ${url}: HTTP ${res.status} ${text.slice(0, 300)}`);
   }
+
   return { status: res.status, body: (text ? JSON.parse(text) : {}) as T };
 }
 
 export interface DemoSite {
   id: string;
   token: string;
-  platform: 'wordpress' | 'shopify';
+  platform: 'wordpress';
 }
 
-// Registers the token on the fake platform (with its faults), then the site through the API.
-export async function registerFakeSite(
-  platform: 'wordpress' | 'shopify',
+// Registers the token on the mock platform (with its faults), then the site through the API.
+export async function registerMockSite(
   faults: { rate: number; kinds: string[] },
   endpoints = { api: API, platforms: PLATFORMS },
 ): Promise<DemoSite> {
-  const token = `${platform}-${randomBytes(12).toString('hex')}`;
+  const platform = 'wordpress';
+  const token = `wordpress-${randomBytes(12).toString('hex')}`;
   await call('POST', `${endpoints.platforms}/_admin/sites`, { token, platform, faults });
-  const base_url =
-    platform === 'wordpress'
-      ? `${PLATFORMS_IN_COMPOSE}/wordpress`
-      : `${PLATFORMS_IN_COMPOSE}/shopify/admin/api/2026-10/blogs/1`;
+  const base_url = `${PLATFORMS_IN_COMPOSE}/wordpress`;
+
   const site = await call<{ id: string }>('POST', `${endpoints.api}/sites`, {
     platform,
     base_url,
     token,
   });
+
   return { id: site.body.id, token, platform };
 }
 

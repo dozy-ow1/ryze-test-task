@@ -1,6 +1,6 @@
 import { createOpenAI } from '@ryze/core';
 import { describe, expect, it } from 'vitest';
-import { recordingHttp } from '../../../../test/support/http.js';
+import { recordingHttp } from '../../testing/http.js';
 
 describe('openai image provider', () => {
   it('is synchronous and returns the decoded image', async () => {
@@ -9,6 +9,7 @@ describe('openai image provider', () => {
         body: { data: [{ b64_json: Buffer.from('png bytes').toString('base64') }] },
       }),
     });
+
     const image = createOpenAI(http, { apiKey: 'sk-o', model: 'gpt-image-1' });
     expect(image.kind).toBe('sync');
     expect((await image.generate?.('basil'))?.toString()).toBe('png bytes');

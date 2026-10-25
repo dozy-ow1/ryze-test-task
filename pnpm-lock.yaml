@@ -61,16 +61,7 @@ importers:
         specifier: ^8.23.1
         version: 8.23.1
 
-  packages/fake-platforms:
-    dependencies:
-      '@ryze/core':
-        specifier: workspace:*
-        version: link:../core
-      fastify:
-        specifier: ^5.12.7
-        version: 5.12.7
-
-  packages/fake-providers:
+  packages/mock-providers:
     dependencies:
       '@ryze/core':
         specifier: workspace:*
@@ -81,6 +72,15 @@ importers:
       sharp:
         specifier: ~0.34.5
         version: 0.34.5
+
+  packages/mock-wordpress:
+    dependencies:
+      '@ryze/core':
+        specifier: workspace:*
+        version: link:../core
+      fastify:
+        specifier: ^5.12.7
+        version: 5.12.7
 
   packages/worker:
     dependencies:

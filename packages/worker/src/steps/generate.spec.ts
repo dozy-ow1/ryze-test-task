@@ -1,16 +1,7 @@
-import {
-  classify,
-  createLogger,
-  Deferred,
-  HttpError,
-  type ImageProvider,
-  llmCost,
-  type Operation,
-  SQL,
-} from '@ryze/core';
+import { classify, createLogger, Deferred, HttpError, type ImageProvider, llmCost, type Operation, SQL } from '@ryze/core';
 import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type TestDb, testDb } from '../../../../test/support/database.js';
+import { type TestDb, testDb } from '../../../core/testing/database.js';
 import type { Clients } from '../clients.js';
 import type { StepContext } from '../runner.js';
 import { coverKey, type Store } from '../store.js';
@@ -35,12 +26,16 @@ beforeEach(() => t.db.query('DELETE FROM quotas'));
 
 function memoryStore(): Store & { objects: Map<string, Buffer> } {
   const objects = new Map<string, Buffer>();
+
   return {
     objects,
+
     exists: async (key) => objects.has(key),
+
     put: async (key, bytes) => {
       objects.set(key, bytes);
     },
+
     get: async (key) => objects.get(key) as Buffer,
   };
 }
@@ -71,11 +66,12 @@ function ctx(clients: Partial<Clients>, op: Partial<Operation> = {}): StepContex
     site: { id: 's', platform: 'wordpress', base_url: 'http://wp', token: 't', verified_at: null },
     clients: {
       db: t.db,
+
       http: async () => ({ status: 200, headers: {}, body: png }),
-      llm: { model: 'fake', generate: vi.fn() },
+      llm: { model: 'mock', generate: vi.fn() },
       image: { kind: 'async' },
       store: memoryStore(),
-      adapters: {} as Clients['adapters'],
+      platform: {} as Clients['platform'],
       ...clients,
     },
     log: createLogger('test', 'silent'),
@@ -106,13 +102,15 @@ it('keeps article identities distinct when their UUID prefixes match', () => {
 describe('text', () => {
   it('writes the four text columns and prices the usage', async () => {
     const usage = { input_tokens: 600, output_tokens: 500 };
+
     const generate = vi.fn(async () => ({
       title: 'Keep Basil Alive',
       bodyHtml: '<p>water</p>',
       imagePrompt: 'basil',
       usage,
     }));
-    const out = await text(ctx({ llm: { model: 'fake', generate } }));
+
+    const out = await text(ctx({ llm: { model: 'mock', generate } }));
     expect(generate).toHaveBeenCalledWith(
       { brief: 'How to keep basil alive' },
       expect.any(AbortSignal),
@@ -127,7 +125,7 @@ describe('text', () => {
         'basil',
       ],
     });
-    expect(out.usage).toEqual({ ...usage, model: 'fake', cost_usd: llmCost('fake', usage) });
+    expect(out.usage).toEqual({ ...usage, model: 'mock', cost_usd: llmCost('mock', usage) });
   });
 
   it('waits for the provider:llm bucket instead of calling', async () => {
@@ -138,8 +136,8 @@ describe('text', () => {
       imagePrompt: 'p',
       usage: { input_tokens: 1, output_tokens: 1 },
     }));
-    await text(ctx({ llm: { model: 'fake', generate } }));
-    await expect(text(ctx({ llm: { model: 'fake', generate } }))).rejects.toBeInstanceOf(Deferred);
+    await text(ctx({ llm: { model: 'mock', generate } }));
+    await expect(text(ctx({ llm: { model: 'mock', generate } }))).rejects.toBeInstanceOf(Deferred);
     expect(generate).toHaveBeenCalledTimes(1);
   });
 });
@@ -147,6 +145,7 @@ describe('text', () => {
 describe('image_submit', () => {
   it('hands the job id to the next row', async () => {
     const submit = vi.fn(async () => ({ jobId: 'job-42' }));
+
     const out = await imageSubmit(ctx({ image: { kind: 'async', submit } }));
     expect(submit).toHaveBeenCalledWith(
       'a basil plant on a sunny windowsill',
@@ -161,18 +160,22 @@ describe('image_fetch', () => {
     const store = memoryStore();
     store.objects.set(coverKey(ARTICLE_ID), Buffer.from('jpeg'));
     const image: ImageProvider = { kind: 'async', poll: vi.fn(), generate: vi.fn() };
+
     const out = await imageFetch(ctx({ store, image }, { provider_ref: 'job-1' }));
-    expect(out.usage).toEqual({ images: 1, model: 'fake', cost_usd: 0.04 });
+    expect(out.usage).toEqual({ images: 1, model: 'mock', cost_usd: 0.04 });
     expect(image.poll).not.toHaveBeenCalled();
   });
 
   it('polls the job it was given, then stores a 1200x630 JPEG under the article key', async () => {
     const store = memoryStore();
     const states = ['pending', 'done'] as const;
+
     const poll = vi.fn(async () => {
       const status = states[Math.min(poll.mock.calls.length - 1, 1)];
+
       return status === 'done' ? { status, url: 'http://img/job-1/file' } : { status };
     });
+
     const out = await imageFetch(
       ctx({ store, image: { kind: 'async', poll } }, { provider_ref: 'job-1' }),
     );
@@ -180,13 +183,14 @@ describe('image_fetch', () => {
     expect(poll).toHaveBeenCalledWith('job-1', expect.any(AbortSignal));
     const meta = await sharp(store.objects.get(coverKey(ARTICLE_ID))).metadata();
     expect(meta).toMatchObject({ format: 'jpeg', width: 1200, height: 630 });
-    expect(out.usage).toEqual({ images: 1, model: 'fake', cost_usd: 0.04 });
+    expect(out.usage).toEqual({ images: 1, model: 'mock', cost_usd: 0.04 });
   });
 
   it('treats a job the provider does not know as permanent', async () => {
     const poll = vi.fn(async () => {
       throw new HttpError(404, 'no such job');
     });
+
     const err = await imageFetch(
       ctx({ image: { kind: 'async', poll } }, { provider_ref: 'gone' }),
     ).catch((e) => e);

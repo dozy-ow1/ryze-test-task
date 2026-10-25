@@ -14,9 +14,11 @@ export const imageFetch: StepFn<Clients> = async (ctx) => {
   const { article, clients, signal } = ctx;
   signal.throwIfAborted();
   const key = coverKey(article.id);
+
   if (await clients.store.exists(key, signal)) {
     return { usage: imageUsage(clients.image.model) };
   }
+
   signal.throwIfAborted();
 
   const raw =
@@ -30,17 +32,22 @@ export const imageFetch: StepFn<Clients> = async (ctx) => {
     .toBuffer();
   signal.throwIfAborted();
   await clients.store.put(key, cover, signal);
+
   return { usage: imageUsage(clients.image.model) };
 };
 
 async function generate({ article, clients, signal }: StepContext<Clients>): Promise<Buffer> {
   const gen = clients.image.generate;
+
   if (!gen) {
     throw new Permanent('the image provider cannot generate synchronously');
   }
+
   const prompt = article.image_prompt ?? article.brief;
+
   return withQuota(clients.db, 'provider:image', 1, () => {
     signal.throwIfAborted();
+
     return gen(prompt, signal);
   });
 }
@@ -51,20 +58,26 @@ async function waitForJob(
   jobId: string | null,
 ): Promise<Buffer> {
   const poll = clients.image.poll;
+
   if (!poll || !jobId) {
     throw new Permanent('no image job to wait for');
   }
+
   const deadline = Date.now() + POLL_FOR_MS;
+
   for (;;) {
     signal.throwIfAborted();
     const job = await poll(jobId, signal);
     signal.throwIfAborted();
+
     if (job.status === 'done' && job.url) {
       return (await clients.http(job.url, { signal })).body;
     }
+
     if (Date.now() >= deadline) {
       throw new Error(`image job ${jobId} not done after 120 s`);
     }
+
     await sleep(POLL_EVERY_MS, undefined, { signal });
   }
 }

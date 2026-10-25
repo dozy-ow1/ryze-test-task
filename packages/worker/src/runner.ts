@@ -1,23 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import {
-  type Completion,
-  claim,
-  classify,
-  complete,
-  type Database,
-  type Deferred,
-  decryptToken,
-  defer,
-  fail,
-  isAuthError,
-  LeaseLost,
-  type Logger,
-  type Operation,
-  Permanent,
-  retry,
-  type Site,
-  type Step,
-} from '@ryze/core';
+import { type Completion, claim, classify, complete, type Database, type Deferred, decryptToken, defer, fail, isAuthError, LeaseLost, type Logger, type Operation, Permanent, retry, type Site, type Step } from '@ryze/core';
 import pLimit, { type LimitFunction } from 'p-limit';
 import { keepLease } from './lease.js';
 
@@ -90,6 +72,7 @@ export function nextStep(step: Step, imageKind: 'async' | 'sync'): Step | null {
 // Seconds before retry n+1: min(1 h, 30 s * 2^n) plus up to 30 % jitter.
 export function backoff(attempts: number, random = Math.random): number {
   const base = Math.min(3600, 30 * 2 ** attempts);
+
   return base + base * 0.3 * random();
 }
 
@@ -103,15 +86,19 @@ export async function runPool<C>(
 ): Promise<void> {
   const limit = pLimit(concurrency);
   const inFlight = new Set<Promise<void>>();
+
   while (!stop.aborted) {
     const free = concurrency - inFlight.size;
+
     if (free > 0) {
       let ops: Operation[] = [];
+
       try {
         ops = await claim(r.db, POOLS[pool], r.leaseSeconds, free, r.maxAttempts);
       } catch (err) {
         r.log.error({ err: describe(err) }, 'claim failed');
       }
+
       for (const op of ops) {
         if (op.status !== 'running') {
           r.log.error(
@@ -120,6 +107,7 @@ export async function runPool<C>(
           );
           continue;
         }
+
         const task: Promise<void> = limit(() => runStep(r, op))
           .then(
             () => {},
@@ -129,8 +117,10 @@ export async function runPool<C>(
         inFlight.add(task);
       }
     }
+
     await sleep(250 + Math.random() * 250, undefined, { signal: stop }).catch(() => {});
   }
+
   r.log.info({ in_flight: inFlight.size }, 'stopping: waiting for steps in flight');
   await Promise.race([Promise.allSettled([...inFlight]), sleep(r.leaseSeconds * 1000)]);
 }
@@ -149,6 +139,7 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
     step: op.step,
     attempt: op.attempts + 1,
   });
+
   const started = Date.now();
   log.info('step start');
   const lease = new AbortController();
@@ -157,14 +148,18 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
   let siteToken: Buffer | undefined;
   let outcome: string;
   let errorClass: string | undefined;
+
   try {
     const { rows } = await r.db.query(LOAD, [op.article_id]);
+
     const row = rows[0];
     siteId = row.site_id;
     siteToken = row.token_enc;
+
     if (row.site_status !== 'active') {
       throw new Permanent(`site is ${row.site_status}`);
     }
+
     const ctx: StepContext<C> = {
       op,
       article: {
@@ -190,18 +185,24 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
       log,
       signal: lease.signal,
     };
+
     const run = () => {
       // An image step may have waited for IMAGE_CONCURRENCY past its lease: then it must not call.
       if (lease.signal.aborted) {
         throw new LeaseLost();
       }
+
       return r.steps[op.step](ctx);
     };
+
     const result = IMAGE_STEPS.has(op.step) ? await r.imageLimit(run) : await run();
+
     if (lease.signal.aborted) {
       throw new LeaseLost();
     }
+
     const next = nextStep(op.step, r.imageKind);
+
     const done = await complete(r.db, op, {
       usage: result.usage,
       write: result.write,
@@ -218,10 +219,13 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
   } finally {
     stopRenewing();
   }
+
   if (outcome === 'lost_lease') {
     log.warn('lost lease: another worker owns this operation');
   }
+
   log.info({ duration_ms: Date.now() - started, outcome, error_class: errorClass }, 'step end');
+
   return outcome;
 }
 
@@ -235,13 +239,17 @@ async function settle<C>(
   siteToken: Buffer | undefined,
 ): Promise<string> {
   const message = describe(err);
+
   if (kind === 'deferred') {
     return (await defer(r.db, op, (err as Deferred).until)) ? 'deferred' : 'lost_lease';
   }
+
   if (kind === 'transient' && op.attempts + 1 < r.maxAttempts) {
     return (await retry(r.db, op, backoff(op.attempts), message)) ? 'retry' : 'lost_lease';
   }
+
   const authSite = PLATFORM_STEPS.has(op.step) && isAuthError(err) ? siteId : undefined;
+
   return (await fail(r.db, op, message, authSite, siteToken)) ? 'failed' : 'lost_lease';
 }
 

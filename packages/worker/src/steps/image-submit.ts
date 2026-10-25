@@ -7,13 +7,18 @@ import type { StepFn } from '../runner.js';
 // that window is accepted and counted by the demo.
 export const imageSubmit: StepFn<Clients> = async ({ article, clients, signal }) => {
   const submit = clients.image.submit;
+
   if (!submit) {
     throw new Permanent('the image provider takes no jobs');
   }
+
   const prompt = article.image_prompt ?? article.brief;
+
   const { jobId } = await withQuota(clients.db, 'provider:image', 1, () => {
     signal.throwIfAborted();
+
     return submit(prompt, signal);
   });
+
   return { providerRef: jobId };
 };

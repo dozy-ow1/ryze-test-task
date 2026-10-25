@@ -6,16 +6,20 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 type Seen = { path?: string; headers: IncomingHttpHeaders; body: Record<string, unknown> };
 let reply: (seen: Seen) => { status: number; headers?: Record<string, string>; body: unknown };
 let seen: Seen;
+
 const server = createServer(async (req, res) => {
   let raw = '';
+
   for await (const chunk of req) {
     raw += chunk;
   }
+
   seen = { path: req.url, headers: req.headers, body: raw ? JSON.parse(raw) : {} };
   const out = reply(seen);
   res.writeHead(out.status, { 'content-type': 'application/json', ...out.headers });
   res.end(JSON.stringify(out.body));
 });
+
 let baseURL: string;
 
 beforeAll(async () => {
@@ -25,6 +29,7 @@ beforeAll(async () => {
 afterAll(() => new Promise<void>((done) => server.close(() => done())));
 
 const article = { title: 'Keep Basil Alive', body_html: '<p>Water it.</p>', image_prompt: 'basil' };
+
 const message = (over: Record<string, unknown> = {}) => ({
   id: 'msg_1',
   type: 'message',
@@ -41,6 +46,7 @@ const message = (over: Record<string, unknown> = {}) => ({
   },
   ...over,
 });
+
 const llm = () =>
   createAnthropic({ apiKey: 'sk-test', model: 'claude-sonnet-5-5', timeoutMs: 5_000, baseURL });
 
@@ -127,11 +133,14 @@ describe('anthropic LLM provider', () => {
     expect(await down.generate({ brief: 'b' }).catch((e) => e)).toMatchObject({ status: 0 });
   });
 
-  it('treats a refusal as permanent', async () => {
+  it.each([
+    { content: [] },
+    { content: [{ type: 'text', text: 'I cannot help with that request.' }] },
+  ])('treats a refusal as permanent before attempting JSON parsing: %j', async ({ content }) => {
     reply = () => ({
       status: 200,
       body: message({
-        content: [],
+        content,
         stop_reason: 'refusal',
         stop_details: { type: 'refusal', category: 'cyber', explanation: 'no' },
       }),
@@ -140,5 +149,6 @@ describe('anthropic LLM provider', () => {
       .generate({ brief: 'b' })
       .catch((e) => e);
     expect(err).toBeInstanceOf(Permanent);
+    expect(classify(err)).toBe('permanent');
   });
 });

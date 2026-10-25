@@ -9,17 +9,18 @@ import { setTimeout as sleep } from 'node:timers/promises';
 import { fileURLToPath } from 'node:url';
 import { POOL_LIMITS } from '../packages/worker/src/settings.js';
 import { createDemoStack } from './demo-stack.js';
-import { ALL_FAULTS, brief, call, registerFakeSite } from './lib.js';
+import { ALL_FAULTS, brief, call, registerMockSite } from './lib.js';
 
 const SERVICES = [
   'postgres',
   'minio',
-  'fake-providers',
-  'fake-platforms',
+  'mock-providers',
+  'mock-wordpress',
   'api',
   'worker-generate',
   'worker-publish',
 ];
+
 const GENERATE_CONCURRENCY = POOL_LIMITS.generate.concurrency;
 const STEPS = ['verify', 'text', 'image_submit', 'image_fetch', 'upload', 'draft', 'publish'];
 
@@ -50,6 +51,7 @@ type Inspect = {
 
 const sh = (cmd: string) =>
   execSync(cmd, { encoding: 'utf8', stdio: ['ignore', 'pipe', 'inherit'] }).trim();
+
 const restarts = (id: string) => Number(sh(`docker inspect -f '{{.RestartCount}}' ${id}`));
 
 // SIGKILL the worker process inside the container: it dies like a crash and Compose restarts the
@@ -57,14 +59,17 @@ const restarts = (id: string) => Number(sh(`docker inspect -f '{{.RestartCount}}
 async function kill(service: string, command = sh): Promise<{ id: string; before: number }> {
   for (let tries = 0; ; tries++) {
     const id = command(`docker compose ps -q ${service}`).split('\n')[0];
+
     try {
       const before = restarts(id);
       sh(`docker exec ${id} sh -c 'kill -9 $(pidof node)'`);
+
       return { id, before };
     } catch (err) {
       if (tries === 5) {
         throw err;
       }
+
       await sleep(1_000); // the container is restarting; take the next running one
     }
   }
@@ -75,11 +80,14 @@ async function cameBack({ id, before }: { id: string; before: number }): Promise
     const [count, running] = sh(
       `docker inspect -f '{{.RestartCount}} {{.State.Running}}' ${id}`,
     ).split(' ');
+
     if (Number(count) > before && running === 'true') {
       return true;
     }
+
     await sleep(1_000);
   }
+
   return false;
 }
 
@@ -95,6 +103,7 @@ interface DemoOptions {
 
 export async function runDemo(options: DemoOptions = {}) {
   const stack = createDemoStack();
+
   try {
     return await run(stack, options);
   } finally {
@@ -107,28 +116,32 @@ async function run(
   { articles = 300, kills = true, deadlineMinutes = 15, faultRate = 0.15 }: DemoOptions,
 ) {
   const sh = stack.command;
+
   const psql = (sql: string) =>
     sh(
       `docker compose exec -T postgres psql -U ryze -d ryze -v ON_ERROR_STOP=1 -tAF '|' -c "${sql}"`,
     );
+
   const failures: string[] = [];
+
   const check = (ok: boolean, what: string) => {
     console.log(`${ok ? 'PASS' : 'FAIL'}  ${what}`);
+
     if (!ok) {
       failures.push(what);
     }
   };
 
-  console.log('starting an isolated fake-only demo stack ...');
+  console.log('starting an isolated mock-only demo stack ...');
   sh(`docker compose up -d --build --wait ${SERVICES.join(' ')}`);
   const API = stack.endpoint('api', 8080);
-  const PROVIDERS = stack.endpoint('fake-providers', 8091);
-  const PLATFORMS = stack.endpoint('fake-platforms', 8092);
+  const PROVIDERS = stack.endpoint('mock-providers', 8091);
+  const PLATFORMS = stack.endpoint('mock-wordpress', 8092);
   const faults = { rate: faultRate, kinds: ALL_FAULTS };
   await call('POST', `${PROVIDERS}/_admin/faults`, faults);
   const sites = [
-    await registerFakeSite('wordpress', faults, { api: API, platforms: PLATFORMS }),
-    await registerFakeSite('shopify', faults, { api: API, platforms: PLATFORMS }),
+    await registerMockSite(faults, { api: API, platforms: PLATFORMS }),
+    await registerMockSite(faults, { api: API, platforms: PLATFORMS }),
   ];
 
   const items = Array.from({ length: articles }, (_, n) => ({
@@ -136,11 +149,13 @@ async function run(
     brief: brief(n),
     idempotency_key: `demo-${n}`,
   }));
+
   const bulk = await call<{ results: { article_id: string; created: boolean }[] }>(
     'POST',
     `${API}/articles/bulk`,
     { items },
   );
+
   const ids = bulk.body.results.map((r) => r.article_id);
   check(
     bulk.status === 202 && bulk.body.results.every((r) => r.created),
@@ -148,12 +163,15 @@ async function run(
   );
   let same = 0;
   const repeats = Math.min(20, articles);
+
   for (let n = 0; n < repeats; n++) {
     const again = await call<{ article_id: string }>('POST', `${API}/articles`, items[n]);
+
     if (again.status === 200 && again.body.article_id === ids[n]) {
       same++;
     }
   }
+
   check(
     same === repeats,
     `the first ${repeats} posted again: ${same}/${repeats} answered 200 with the same id`,
@@ -167,6 +185,7 @@ async function run(
   const inFlight = { text: 0, image_submit: 0 };
   const killed: { id: string; before: number }[] = [];
   let summary: Summary;
+
   for (;;) {
     while (killAt.length && elapsed() >= killAt[0]) {
       killAt.shift();
@@ -183,15 +202,18 @@ async function run(
         `t+${elapsed().toFixed(0)}s  kill -9: ${victims} (in flight: ${text} text, ${submits} image_submit)`,
       );
     }
+
     summary = (await call<Summary>('GET', `${API}/articles/summary`)).body;
     const open = busy(summary);
     console.log(
       `t+${elapsed().toFixed(0)}s  published ${summary.articles.published}/${articles}, ` +
         `operations pending or running: ${open}`,
     );
+
     if (open === 0 && !killAt.length) {
       break;
     }
+
     if (elapsed() > deadlineMinutes * 60) {
       const late = psql(
         `SELECT step || ' attempts ' || attempts || ', next try in ' ||
@@ -202,10 +224,13 @@ async function run(
       check(false, `the pipeline drains within ${deadlineMinutes} minutes`);
       break;
     }
+
     const nextKill = killAt.length ? killAt[0] - elapsed() : 5;
     await sleep(Math.max(0.5, Math.min(5, nextKill)) * 1000);
   }
+
   const minutes = (elapsed() / 60).toFixed(1);
+
   if (kills) {
     const back = await Promise.all(killed.map(cameBack));
     check(
@@ -216,12 +241,14 @@ async function run(
 
   // What the platforms hold, before the reconciler has had any chance to clean up.
   const inspect = (await call<Inspect>('GET', `${PLATFORMS}/_admin/inspect`)).body;
+
   const recorded = new Map(
     psql('SELECT id, site_id, remote_media_id, remote_post_id, remote_url FROM articles')
       .split('\n')
       .map((line) => line.split('|'))
       .map(([id, siteId, mediaId, postId, url]) => [id, { siteId, mediaId, postId, url }]),
   );
+
   const ours = new Set(ids);
   const postsOf = new Map<string, number>();
   const mediaOf = new Map<string, number>();
@@ -231,42 +258,49 @@ async function run(
   let sharedSlugs = 0;
   let foreignMedia = 0;
   let consistent = 0;
+
   for (const site of inspect.sites.filter((s) => sites.some((d) => d.token === s.token))) {
     const registered = sites.find((d) => d.token === site.token);
     const siteId = registered?.id;
     const media = new Map(site.media.map((m) => [m.id, m.filename]));
     const slugs = new Set<string>();
+
     for (const p of site.posts) {
       if (p.status === 'live') {
         live++;
       } else {
         drafts++;
       }
+
       if (!p.article_id) {
         unmarked++;
       } else {
         postsOf.set(p.article_id, (postsOf.get(p.article_id) ?? 0) + 1);
       }
+
       if (slugs.has(p.slug)) {
         sharedSlugs++;
       }
+
       slugs.add(p.slug);
       // The article's own post, on its own site, with its own cover, as the database recorded it.
       const mine = p.article_id ? recorded.get(p.article_id) : undefined;
+
       if (
         mine &&
         mine.siteId === siteId &&
         mine.postId === p.id &&
-        mine.mediaId ===
-          (registered?.platform === 'shopify' ? media.get(p.media_id ?? '') : p.media_id) &&
+        mine.mediaId === p.media_id &&
         mine.url === p.url &&
         media.get(p.media_id ?? '') === `ryze-${p.article_id}.jpg`
       ) {
         consistent++;
       }
     }
+
     for (const m of site.media) {
       const id = /^ryze-(.+)\.jpg$/.exec(m.filename)?.[1];
+
       if (id && ours.has(id) && recorded.get(id)?.siteId === siteId) {
         mediaOf.set(id, (mediaOf.get(id) ?? 0) + 1);
       } else {
@@ -274,6 +308,7 @@ async function run(
       }
     }
   }
+
   const once = (m: Map<string, number>) => ids.filter((id) => m.get(id) === 1).length;
   const orphans = foreignMedia + [...mediaOf.values()].reduce((n, c) => n + Math.max(0, c - 1), 0);
 
@@ -296,12 +331,14 @@ async function run(
   const reconcileOut = sh(
     'docker compose run --rm --no-deps reconciler node dist/main.js --mode=reconcile',
   );
+
   const reportLine = reconcileOut.split('\n').find((l) => l.includes('"spend_usd"')) ?? '{}';
   const report = JSON.parse(reportLine);
   check(report.strays?.found === 0, `the reconciler finds no stray post (${report.strays?.found})`);
 
   // What the providers charged, and why anything beyond one call per article happened.
   const counters = (await call<Counters>('GET', `${PROVIDERS}/_admin/counters`)).body;
+
   const money = (calls: number, drops: number, running: number, what: string) => {
     const lost = calls - articles - drops;
     const bound = Math.min(running, kills ? GENERATE_CONCURRENCY * 2 : 0);
@@ -331,18 +368,22 @@ async function run(
             count(*) FILTER (WHERE status = 'unknown'), sum(attempts), max(attempts)
      FROM operations GROUP BY step`,
   );
+
   const byStep = new Map(rows.split('\n').map((l) => [l.split('|')[0], l.split('|').slice(1)]));
+
   for (const s of STEPS) {
     const [ok, failed, unknown, attempts, max] = byStep.get(s) ?? ['0', '0', '0', '0', '0'];
     console.log(
       `  ${s.padEnd(13)} ${ok.padStart(9)} ${failed.padStart(7)} ${unknown.padStart(8)} ${attempts.padStart(9)} ${max.padStart(4)}`,
     );
   }
+
   console.log(
     `\nprovider spend $${counters.spend_usd.toFixed(4)}; recorded in operations.usage ` +
       `$${Number(report.spend_usd ?? 0).toFixed(4)}; drained in ${minutes} min`,
   );
   console.log(failures.length ? `\nDEMO FAILED: ${failures.join('; ')}` : '\nDEMO PASSED');
+
   return failures.length === 0;
 }
 

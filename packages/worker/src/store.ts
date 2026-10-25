@@ -1,9 +1,4 @@
-import {
-  GetObjectCommand,
-  HeadObjectCommand,
-  PutObjectCommand,
-  S3Client,
-} from '@aws-sdk/client-s3';
+import { GetObjectCommand, HeadObjectCommand, PutObjectCommand, S3Client } from '@aws-sdk/client-s3';
 import type { WorkerConfig } from '@ryze/core';
 import { HTTP_TIMEOUT_MS } from './settings.js';
 
@@ -27,11 +22,14 @@ export function s3Store(config: WorkerConfig): Store {
     // Without a deadline a hung call would hold its operation forever (the lease keeps renewing).
     requestHandler: { connectionTimeout: 5_000, requestTimeout: HTTP_TIMEOUT_MS },
   });
+
   const Bucket = config.S3_BUCKET;
+
   return {
     async exists(key, signal) {
       try {
         await s3.send(new HeadObjectCommand({ Bucket, Key: key }), { abortSignal: signal });
+
         return true;
       } catch (err) {
         if (
@@ -39,22 +37,27 @@ export function s3Store(config: WorkerConfig): Store {
         ) {
           return false;
         }
+
         throw err;
       }
     },
+
     async put(key, bytes, signal) {
       await s3.send(
         new PutObjectCommand({ Bucket, Key: key, Body: bytes, ContentType: 'image/jpeg' }),
         { abortSignal: signal },
       );
     },
+
     async get(key, signal) {
       const res = await s3.send(new GetObjectCommand({ Bucket, Key: key }), {
         abortSignal: signal,
       });
+
       if (!res.Body) {
         throw new Error(`empty object ${key}`);
       }
+
       return Buffer.from(await res.Body.transformToByteArray());
     },
   };

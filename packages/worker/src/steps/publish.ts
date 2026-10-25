@@ -7,18 +7,25 @@ import type { StepFn } from '../runner.js';
 // the status read and the publish, like upload.
 export const publish: StepFn<Clients> = async ({ article, site, clients, signal }) => {
   const postId = article.remote_post_id;
+
   if (!postId) {
     throw new Permanent('no post to publish');
   }
-  const adapter = clients.adapters[site.platform];
+
+  const adapter = clients.platform;
+
   const url = await withQuota(clients.db, `site:${site.id}`, 2, async () => {
     signal.throwIfAborted();
     const now = await adapter.getStatus(site, postId, signal);
+
     if (now.status === 'live' && now.url) {
       return now.url;
     }
+
     signal.throwIfAborted();
+
     return adapter.publish(site, postId, signal);
   });
+
   return { write: { sql: SQL.WRITE_PUBLISHED, params: [article.id, url] } };
 };
