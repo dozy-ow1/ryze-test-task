@@ -142,6 +142,14 @@ export const SQL = {
     ON CONFLICT (scope) DO NOTHING`,
 } as const;
 
+// Another worker owns the operation now (its lease_version moved on). Roll back and stop.
+export class LeaseLost extends Error {
+  constructor() {
+    super('lease lost');
+    this.name = 'LeaseLost';
+  }
+}
+
 export function createPool(connectionString: string, max = 10): pg.Pool {
   const pool = new pg.Pool({ connectionString, max, connectionTimeoutMillis: 5_000 });
   // An idle client losing its connection must not crash the process; the next checkout reconnects.

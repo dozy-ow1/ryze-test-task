@@ -41,6 +41,24 @@ authentication in this version.
 Errors: 400 validation, 404 unknown site or article, 409 inactive site or retry not allowed,
 503 database unavailable (requests are transactional, so a failure never leaves partial rows).
 
+## Worker
+
+One binary, `packages/worker`: `--pool=generate` runs verify, text, image_submit, image_fetch;
+`--pool=publish` runs upload, draft, publish; `--mode=reconcile` runs the reconciler once.
+
+- **Claim**: `free = CONCURRENCY - in flight`; one `CLAIM` statement (`FOR UPDATE SKIP LOCKED`) takes
+  up to `free` due rows of the pool's steps, or rows whose lease expired, and gives each a new
+  `lease_version`. Sleep 250-500 ms, repeat; no LISTEN/NOTIFY.
+- **Lease**: while a step runs, `RENEW` every `LEASE_SECONDS / 3`; zero rows means another worker
+  owns the row now, so the step is aborted.
+- **Complete**: one transaction writes `succeeded` + usage, the step's own article columns and the
+  next step's row. Every write carries `id = $1 AND lease_version = $2 AND status = 'running'` and
+  must touch exactly one row, otherwise it rolls back and stops.
+- **Failures**: `classify(err)` → deferred (empty bucket / open breaker: back to pending, no attempt
+  counted), transient (retry after `min(1h, 30s·2^n) + 0-30 %`), permanent (failed; 401/403 also
+  marks the site `auth_failed`). A lease that expires on the last attempt becomes `unknown`.
+- **SIGTERM**: stop claiming, wait up to one lease for the steps in flight, exit 0.
+
 ## Notes on inputs
 
 - `db/schema.sql` and `db/schema_test.sql` were not part of the build spec I received, so they were

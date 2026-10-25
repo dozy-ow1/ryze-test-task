@@ -8,6 +8,9 @@ x-worker: &worker
       PKG: worker
   image: ryze-worker
   env_file: .env
+  # node is not PID 1, so a SIGKILL to it ends the container the way a crash does and the restart
+  # policy brings it back (`docker kill` counts as a manual stop and would not be restarted).
+  init: true
 
 services:
   postgres:
@@ -79,6 +82,34 @@ services:
       interval: 2s
       timeout: 3s
       retries: 30
+
+  worker-generate:
+    <<: *worker
+    command: ["node", "dist/main.js", "--pool=generate"]
+    environment:
+      POOL: generate
+      CONCURRENCY: 8
+      LEASE_SECONDS: 120
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+
+  worker-publish:
+    <<: *worker
+    command: ["node", "dist/main.js", "--pool=publish"]
+    environment:
+      POOL: publish
+      CONCURRENCY: 16
+      LEASE_SECONDS: 60
+    restart: unless-stopped
+    deploy:
+      replicas: 2
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
 
 volumes:
   pgdata:
