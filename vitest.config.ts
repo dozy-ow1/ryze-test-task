@@ -15,7 +15,12 @@ export default defineConfig({
     },
   },
   test: {
-    include: ['packages/*/src/**/*.spec.ts', 'scripts/**/*.spec.ts'],
+    include: [
+      'apps/*/src/**/*.spec.ts',
+      'packages/*/src/**/*.spec.ts',
+      'packages/*/testing/**/*.spec.ts',
+      'tools/**/*.spec.ts',
+    ],
     testTimeout: 20_000,
     hookTimeout: 30_000,
   },

@@ -27,7 +27,6 @@ services:
       - "127.0.0.1:${POSTGRES_PORT:-5432}:5432"
     volumes:
       - pgdata:/var/lib/postgresql/data
-      - ./db:/db:ro
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ryze -d ryze"]
       interval: 2s
@@ -62,7 +61,7 @@ services:
 
   migrate:
     <<: *worker
-    command: ["node", "dist/scripts/migrate.js"]
+    command: ["node_modules/.bin/ryze-migrate"]
     depends_on:
       postgres:
         condition: service_healthy
@@ -116,7 +115,7 @@ services:
 
   reconciler:
     <<: *worker
-    command: ["sh", "-c", "while true; do node dist/main.js --mode=reconcile; sleep 60; done"]
+    command: ["sh", "-c", "while true; do node dist/reconcile.js; sleep 60; done"]
     restart: unless-stopped
     depends_on:
       migrate:

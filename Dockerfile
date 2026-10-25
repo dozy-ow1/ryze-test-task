@@ -16,6 +16,5 @@ FROM node:22-alpine
 ENV NODE_ENV=production
 WORKDIR /app
 COPY --from=build --chown=node:node /out ./
-COPY --chown=node:node db ./db
 USER node
 CMD ["node", "dist/main.js"]

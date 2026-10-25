@@ -1,6 +1,6 @@
 import { z } from 'zod';
-import type { TextUsage } from '../pricing.js';
-import { Permanent } from '../quota.js';
+import { Permanent } from '../utils/errors.js';
+import type { TextUsage } from './pricing.js';
 
 export interface TextResult {
   title: string;

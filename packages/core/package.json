@@ -12,7 +12,9 @@
     }
   },
   "files": [
-    "dist"
+    "bin",
+    "dist",
+    "migrations"
   ],
   "scripts": {
     "build": "rm -rf dist && tsc -p tsconfig.json"
@@ -26,5 +28,8 @@
   },
   "devDependencies": {
     "@types/pg": "^8.23.1"
+  },
+  "bin": {
+    "ryze-migrate": "bin/migrate.js"
   }
 }

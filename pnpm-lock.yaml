@@ -27,14 +27,53 @@ importers:
         specifier: 3.2.7
         version: 3.2.7(@types/node@22.20.5)(tsx@4.23.15)
 
-  packages/api:
+  apps/api:
     dependencies:
       '@ryze/core':
         specifier: workspace:*
-        version: link:../core
+        version: link:../../packages/core
       fastify:
         specifier: ^5.12.7
         version: 5.12.7
+      zod:
+        specifier: ^4.6.7
+        version: 4.6.7
+
+  apps/mock-providers:
+    dependencies:
+      '@ryze/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      fastify:
+        specifier: ^5.12.7
+        version: 5.12.7
+      sharp:
+        specifier: ~0.34.5
+        version: 0.34.5
+
+  apps/mock-wordpress:
+    dependencies:
+      '@ryze/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      fastify:
+        specifier: ^5.12.7
+        version: 5.12.7
+
+  apps/worker:
+    dependencies:
+      '@aws-sdk/client-s3':
+        specifier: ^3.1156.0
+        version: 3.1156.0
+      '@ryze/core':
+        specifier: workspace:*
+        version: link:../../packages/core
+      p-limit:
+        specifier: ^7.3.3
+        version: 7.3.3
+      sharp:
+        specifier: ~0.34.5
+        version: 0.34.5
       zod:
         specifier: ^4.6.7
         version: 4.6.7
@@ -60,42 +99,6 @@ importers:
       '@types/pg':
         specifier: ^8.23.1
         version: 8.23.1
-
-  packages/mock-providers:
-    dependencies:
-      '@ryze/core':
-        specifier: workspace:*
-        version: link:../core
-      fastify:
-        specifier: ^5.12.7
-        version: 5.12.7
-      sharp:
-        specifier: ~0.34.5
-        version: 0.34.5
-
-  packages/mock-wordpress:
-    dependencies:
-      '@ryze/core':
-        specifier: workspace:*
-        version: link:../core
-      fastify:
-        specifier: ^5.12.7
-        version: 5.12.7
-
-  packages/worker:
-    dependencies:
-      '@aws-sdk/client-s3':
-        specifier: ^3.1156.0
-        version: 3.1156.0
-      '@ryze/core':
-        specifier: workspace:*
-        version: link:../core
-      p-limit:
-        specifier: ^7.3.3
-        version: 7.3.3
-      sharp:
-        specifier: ~0.34.5
-        version: 0.34.5
 
 packages:
 

@@ -1,10 +1,10 @@
-import { getJson, type Http } from '../platforms/http.js';
-import type { TextUsage } from '../pricing.js';
+import { getJson, type Http } from '../utils/http.js';
+import type { TextUsage } from './pricing.js';
 import { type ArticleContent, type TextProvider, validateArticle } from './text.js';
 
 type MockText = ArticleContent & { usage: TextUsage };
 
-// The emulator in packages/mock-providers.
+// The emulator in apps/mock-providers.
 export function createMockText(http: Http, baseUrl: string): TextProvider {
   return {
     model: 'mock',

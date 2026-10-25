@@ -1,5 +1,5 @@
-import { Permanent } from '../quota.js';
-import { getJson, type Http, HttpError } from './http.js';
+import { Permanent } from '../utils/errors.js';
+import { getJson, type Http, HttpError } from '../utils/http.js';
 import type { PlatformAdapter, RemotePost, Site } from './types.js';
 
 interface WpPost {

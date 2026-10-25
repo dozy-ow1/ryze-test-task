@@ -1,7 +1,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import { zodOutputFormat } from '@anthropic-ai/sdk/helpers/zod';
-import { HttpError, retryAfterSeconds } from '../platforms/http.js';
-import { Permanent } from '../quota.js';
+import { Permanent } from '../utils/errors.js';
+import { HttpError, retryAfterSeconds } from '../utils/http.js';
 import { articleSchema, type TextProvider, validateArticle } from './text.js';
 
 const ARTICLE_PROMPT = `Write a complete, accurate SEO article from the brief for a general audience.

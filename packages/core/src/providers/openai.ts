@@ -1,4 +1,4 @@
-import { getJson, type Http } from '../platforms/http.js';
+import { getJson, type Http } from '../utils/http.js';
 import type { ImageProvider } from './image.js';
 
 // OpenAI Images (gpt-image-1): synchronous, the image comes back base64 in the response. With a

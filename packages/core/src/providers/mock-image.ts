@@ -1,7 +1,7 @@
-import { getJson, type Http } from '../platforms/http.js';
+import { getJson, type Http } from '../utils/http.js';
 import type { ImageProvider } from './image.js';
 
-// The emulator in packages/mock-providers: asynchronous jobs, so the job-id recovery path runs.
+// The emulator in apps/mock-providers: asynchronous jobs, so the job-id recovery path runs.
 export function createMockImage(http: Http, baseUrl: string): ImageProvider {
   return {
     kind: 'async',

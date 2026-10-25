@@ -8,7 +8,9 @@
     }
   },
   "include": [
-    "scripts",
+    "tools",
+    "apps/*/src/**/*.spec.ts",
+    "apps/*/testing/**/*.ts",
     "packages/*/src/**/*.spec.ts",
     "packages/*/testing/**/*.ts",
     "vitest.config.ts"
