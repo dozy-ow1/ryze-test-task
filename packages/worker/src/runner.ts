@@ -4,7 +4,7 @@ import {
   claim,
   classify,
   complete,
-  type Db,
+  type Database,
   type Deferred,
   decryptToken,
   defer,
@@ -14,12 +14,12 @@ import {
   type Logger,
   type Operation,
   Permanent,
-  renew,
   retry,
   type Site,
   type Step,
 } from '@ryze/core';
 import pLimit, { type LimitFunction } from 'p-limit';
+import { keepLease } from './lease.js';
 
 export const POOLS = {
   generate: ['verify', 'text', 'image_submit', 'image_fetch'],
@@ -28,6 +28,7 @@ export const POOLS = {
 export type PoolName = keyof typeof POOLS;
 
 const IMAGE_STEPS = new Set<Step>(['image_submit', 'image_fetch']);
+const PLATFORM_STEPS = new Set<Step>(['verify', 'upload', 'draft', 'publish']);
 
 export interface Article {
   id: string;
@@ -44,7 +45,7 @@ export interface Article {
 export interface StepContext<C> {
   op: Operation;
   article: Article;
-  site: Site & { verified_at: Date | null };
+  site: Site & { verified_at: Date | null; tokenVersion?: Buffer };
   clients: C;
   log: Logger;
   signal: AbortSignal; // aborted when the lease is lost
@@ -56,7 +57,7 @@ export type StepResult = Pick<Completion, 'usage' | 'write'> & { providerRef?: s
 export type StepFn<C> = (ctx: StepContext<C>) => Promise<StepResult>;
 
 export interface Runner<C> {
-  db: Db;
+  db: Database;
   log: Logger;
   steps: Record<Step, StepFn<C>>;
   clients: C;
@@ -151,15 +152,19 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
   const started = Date.now();
   log.info('step start');
   const lease = new AbortController();
-  const stopRenewing = keepLease(r, op, lease, log);
+  const stopRenewing = keepLease(r.db, op, r.leaseSeconds, lease, log);
   let siteId: string | undefined;
+  let siteToken: Buffer | undefined;
   let outcome: string;
   let errorClass: string | undefined;
   try {
     const { rows } = await r.db.query(LOAD, [op.article_id]);
     const row = rows[0];
     siteId = row.site_id;
-    if (row.site_status !== 'active') throw new Permanent(`site is ${row.site_status}`);
+    siteToken = row.token_enc;
+    if (row.site_status !== 'active') {
+      throw new Permanent(`site is ${row.site_status}`);
+    }
     const ctx: StepContext<C> = {
       op,
       article: {
@@ -179,6 +184,7 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
         base_url: row.base_url,
         token: decryptToken(row.token_enc, r.siteTokenKey),
         verified_at: row.verified_at,
+        tokenVersion: row.token_enc,
       },
       clients: r.clients,
       log,
@@ -186,11 +192,15 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
     };
     const run = () => {
       // An image step may have waited for IMAGE_CONCURRENCY past its lease: then it must not call.
-      if (lease.signal.aborted) throw new LeaseLost();
+      if (lease.signal.aborted) {
+        throw new LeaseLost();
+      }
       return r.steps[op.step](ctx);
     };
     const result = IMAGE_STEPS.has(op.step) ? await r.imageLimit(run) : await run();
-    if (lease.signal.aborted) throw new LeaseLost();
+    if (lease.signal.aborted) {
+      throw new LeaseLost();
+    }
     const next = nextStep(op.step, r.imageKind);
     const done = await complete(r.db, op, {
       usage: result.usage,
@@ -203,12 +213,14 @@ export async function runStep<C>(r: Runner<C>, op: Operation): Promise<string> {
       outcome = 'lost_lease';
     } else {
       errorClass = classify(err);
-      outcome = await settle(r, op, err, errorClass, siteId);
+      outcome = await settle(r, op, err, errorClass, siteId, siteToken);
     }
   } finally {
     stopRenewing();
   }
-  if (outcome === 'lost_lease') log.warn('lost lease: another worker owns this operation');
+  if (outcome === 'lost_lease') {
+    log.warn('lost lease: another worker owns this operation');
+  }
   log.info({ duration_ms: Date.now() - started, outcome, error_class: errorClass }, 'step end');
   return outcome;
 }
@@ -220,6 +232,7 @@ async function settle<C>(
   err: unknown,
   kind: string,
   siteId: string | undefined,
+  siteToken: Buffer | undefined,
 ): Promise<string> {
   const message = describe(err);
   if (kind === 'deferred') {
@@ -228,39 +241,8 @@ async function settle<C>(
   if (kind === 'transient' && op.attempts + 1 < r.maxAttempts) {
     return (await retry(r.db, op, backoff(op.attempts), message)) ? 'retry' : 'lost_lease';
   }
-  const authSite = isAuthError(err) ? siteId : undefined;
-  return (await fail(r.db, op, message, authSite)) ? 'failed' : 'lost_lease';
-}
-
-// RENEW every LEASE_SECONDS / 3 while the step runs; zero rows means the lease is gone: abort.
-// If renewals keep failing for a whole lease, it has expired anyway (another worker may have it).
-function keepLease<C>(r: Runner<C>, op: Operation, lease: AbortController, log: Logger) {
-  let stopped = false;
-  let timer: NodeJS.Timeout;
-  let heldAt = Date.now(); // the claim set the lease
-  const tick = async () => {
-    try {
-      const held = await renew(r.db, op, r.leaseSeconds);
-      if (stopped) return;
-      if (!held) {
-        lease.abort(new LeaseLost());
-        return;
-      }
-      heldAt = Date.now();
-    } catch (err) {
-      log.warn({ err: describe(err) }, 'lease renewal failed');
-      if (Date.now() - heldAt >= r.leaseSeconds * 1000) {
-        lease.abort(new LeaseLost());
-        return;
-      }
-    }
-    if (!stopped) timer = setTimeout(tick, (r.leaseSeconds * 1000) / 3);
-  };
-  timer = setTimeout(tick, (r.leaseSeconds * 1000) / 3);
-  return () => {
-    stopped = true;
-    clearTimeout(timer);
-  };
+  const authSite = PLATFORM_STEPS.has(op.step) && isAuthError(err) ? siteId : undefined;
+  return (await fail(r.db, op, message, authSite, siteToken)) ? 'failed' : 'lost_lease';
 }
 
 // A short error description for logs and last_error. Never includes tokens or article bodies.

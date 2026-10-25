@@ -1,4 +1,4 @@
-import { type Db, decryptToken, getJson, type Logger } from '@ryze/core';
+import { type Database, decryptToken, getJson, type Logger, withQuota } from '@ryze/core';
 import type { Clients } from './clients.js';
 
 interface InspectedSite {
@@ -7,7 +7,7 @@ interface InspectedSite {
 }
 
 export interface Reconcile {
-  db: Db;
+  db: Database;
   clients: Clients;
   log: Logger;
   siteTokenKey: string;
@@ -17,14 +17,23 @@ export interface Reconcile {
 // Runs once (Compose loops it every 60 s). Three read-mostly jobs: delete stray drafts, report
 // stuck operations, report the pipeline's numbers.
 export async function reconcile(r: Reconcile) {
-  const strays = r.fakePlatformsUrl ? await removeStrays(r, r.fakePlatformsUrl) : null;
+  let strays = null;
+  if (r.fakePlatformsUrl) {
+    try {
+      strays = await removeStrays(r, r.fakePlatformsUrl);
+    } catch (err) {
+      r.log.error({ err }, 'stray cleanup failed; continuing report');
+    }
+  }
 
   // Leases already make these reclaimable; a step running this long means a hung worker.
   const stuck = await r.db.query(
     `SELECT id, article_id, step, attempts, updated_at FROM operations
      WHERE status = 'running' AND updated_at < now() - interval '15 minutes'`,
   );
-  for (const op of stuck.rows) r.log.warn(op, 'stuck operation');
+  for (const op of stuck.rows) {
+    r.log.warn(op, 'stuck operation');
+  }
 
   const ops = await r.db.query<{ step: string; status: string; n: number }>(
     'SELECT step, status, count(*) AS n FROM operations GROUP BY step, status ORDER BY step, status',
@@ -33,7 +42,9 @@ export async function reconcile(r: Reconcile) {
     'SELECT count(*) AS total, count(published_at) AS published FROM articles',
   );
   const spend = await r.db.query(
-    `SELECT COALESCE(sum((usage ->> 'cost_usd')::numeric), 0)::float8 AS usd FROM operations`,
+    `SELECT COALESCE(sum((usage ->> 'cost_usd')::numeric), 0)::float8 AS usd,
+            count(*) FILTER (WHERE usage IS NOT NULL AND usage ->> 'cost_usd' IS NULL) AS unknown
+     FROM operations`,
   );
   const operations: Record<string, Record<string, number>> = {};
   for (const o of ops.rows) {
@@ -46,6 +57,7 @@ export async function reconcile(r: Reconcile) {
     operations,
     articles: articles.rows[0],
     spend_usd: Math.round(spend.rows[0].usd * 1e6) / 1e6,
+    unknown_cost_operations: spend.rows[0].unknown,
   };
 }
 
@@ -68,7 +80,9 @@ async function removeStrays(r: Reconcile, inspectUrl: string) {
   let deleted = 0;
   for (const remote of inspected.sites) {
     const rowsForToken = byToken.get(remote.token);
-    if (!rowsForToken) continue;
+    if (!rowsForToken) {
+      continue;
+    }
     const s = rowsForToken[0];
     const site = { id: s.id, platform: s.platform, base_url: s.base_url, token: remote.token };
     const { rows } = await r.db.query<{ id: string; remote_post_id: string | null }>(
@@ -77,20 +91,32 @@ async function removeStrays(r: Reconcile, inspectUrl: string) {
     );
     const recorded = new Map(rows.map((a) => [a.id, a.remote_post_id]));
     for (const post of remote.posts) {
-      if (!post.article_id) continue; // not ours
+      if (!post.article_id) {
+        continue; // not ours
+      }
       // An article we do not know (another environment on the same blog) is not ours to judge;
       // one that recorded no post yet has a draft step in flight.
-      if (!recorded.has(post.article_id)) continue;
+      if (!recorded.has(post.article_id)) {
+        continue;
+      }
       const postId = recorded.get(post.article_id);
-      if (postId === post.id || postId === null) continue;
+      if (postId === post.id || postId === null) {
+        continue;
+      }
       found++;
       if (post.status !== 'draft') {
         r.log.warn({ site_id: site.id, post_id: post.id }, 'live stray post: left for a human');
         continue;
       }
-      await r.clients.adapters[site.platform as 'wordpress' | 'shopify'].deleteDraft(site, post.id);
-      deleted++;
-      r.log.info({ site_id: site.id, post_id: post.id }, 'deleted stray draft');
+      try {
+        await withQuota(r.db, `site:${site.id}`, 1, () =>
+          r.clients.adapters[site.platform as 'wordpress' | 'shopify'].deleteDraft(site, post.id),
+        );
+        deleted++;
+        r.log.info({ site_id: site.id, post_id: post.id }, 'deleted stray draft');
+      } catch (err) {
+        r.log.warn({ err, site_id: site.id, post_id: post.id }, 'stray draft cleanup deferred');
+      }
     }
   }
   return { found, deleted };

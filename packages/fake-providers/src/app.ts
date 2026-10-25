@@ -88,7 +88,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
   });
 
   function pickFault(group: FaultGroup): FaultKind | undefined {
-    if (faults.kinds.length === 0 || random() >= faults.rate) return undefined;
+    if (faults.kinds.length === 0 || random() >= faults.rate) {
+      return undefined;
+    }
     const kind = faults.kinds[Math.floor(random() * faults.kinds.length)];
     counters.faults[group][kind] += 1;
     app.log.debug({ group, fault: kind }, 'injecting fault');
@@ -107,7 +109,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
     if (fault === '429') {
       return reply.code(429).header('retry-after', '2').send({ error: 'rate limited' });
     }
-    if (fault === '500') return reply.code(500).send({ error: 'internal error' });
+    if (fault === '500') {
+      return reply.code(500).send({ error: 'internal error' });
+    }
     if (fault === 'timeout') {
       // Never answer; cut the socket when the hold is over (the client should give up first).
       reply.hijack();
@@ -116,7 +120,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
       socket.once('close', () => clearTimeout(timer));
       return reply;
     }
-    if (fault === 'slow') await sleep(between(delays.slowExtraMs));
+    if (fault === 'slow') {
+      await sleep(between(delays.slowExtraMs));
+    }
     const result = await work();
     if (fault === 'complete_then_drop') {
       reply.hijack();
@@ -134,7 +140,7 @@ export function buildApp(options: AppOptions): FastifyInstance {
         await sleep(between(delays.textWorkMs));
         const article = writeArticle(request.body.brief);
         counters.text_calls += 1;
-        counters.spend_usd += llmCost('fake', article.usage);
+        counters.spend_usd += llmCost('fake', article.usage) ?? 0;
         return article;
       }),
   );
@@ -157,15 +163,23 @@ export function buildApp(options: AppOptions): FastifyInstance {
 
   app.get<{ Params: { job: string } }>('/v1/images/:job', async (request, reply) => {
     const job = jobs.get(request.params.job);
-    if (!job) return reply.code(404).send({ error: 'unknown job' });
-    if (Date.now() < job.readyAt) return { status: 'pending' };
+    if (!job) {
+      return reply.code(404).send({ error: 'unknown job' });
+    }
+    if (Date.now() < job.readyAt) {
+      return { status: 'pending' };
+    }
     return { status: 'done', url: `/v1/images/${request.params.job}/file` };
   });
 
   app.get<{ Params: { job: string } }>('/v1/images/:job/file', async (request, reply) => {
     const job = jobs.get(request.params.job);
-    if (!job) return reply.code(404).send({ error: 'unknown job' });
-    if (Date.now() < job.readyAt) return reply.code(409).send({ error: 'job not done yet' });
+    if (!job) {
+      return reply.code(404).send({ error: 'unknown job' });
+    }
+    if (Date.now() < job.readyAt) {
+      return reply.code(409).send({ error: 'job not done yet' });
+    }
     return reply.type('image/png').send(await renderImage(job.prompt));
   });
 

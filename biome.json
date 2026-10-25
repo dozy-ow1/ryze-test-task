@@ -17,7 +17,8 @@
   "linter": {
     "enabled": true,
     "rules": {
-      "preset": "recommended"
+      "preset": "recommended",
+      "style": { "useBlockStatements": "error" }
     }
   }
 }

@@ -1,236 +1,177 @@
-# Ryze publishing pipeline (minimal version)
+# Ryze publishing pipeline
 
-Generates SEO articles and publishes them to customers' sites: text (LLM) → cover image (image
-model) → upload to the customer's platform → publish. Postgres is the only source of truth; workers
-can be killed at any moment and every article still ends up live exactly once, with its image, without
-paying twice for text or images already generated.
+A TypeScript workspace that generates an article and cover image, uploads them to a customer's
+WordPress or Shopify site, and publishes the post. Postgres holds both the queue and the execution
+ledger. Workers recover expired leases and look up previous platform effects before repeating writes.
 
-## Architecture
+## Run locally
 
-```
-  client ──POST /sites, /articles──▶ api (8080) ──▶ ┌──────────────── Postgres ────────────────┐
-                                                    │ sites · articles · quotas                 │
-                                                    │ operations: one row per (article, step),  │
-                                                    │ the queue and the ledger at once          │
-                                                    └───▲─────────────────────────────▲─────────┘
-                       CLAIM · RENEW · COMPLETE (fenced)│                             │
-                ┌───────────────────────────────────────┘                             └──────────────┐
-     worker --pool=generate (×2)                                                 worker --pool=publish (×2)
-     verify → text → image_submit → image_fetch ──────────▶ MinIO ◀──── upload → draft → publish
-        │        │          │             │       articles/<id>/cover.jpg             │
-        │        ▼          ▼             ▼                                           ▼
-        │      LLM      image API (job id → provider_ref)                   WordPress / Shopify
-        └───────────────────────────────────────────────────────────────▶ (verify, site quota)
-     reconciler (once a minute): stray drafts, stuck operations, report
-```
-
-Services never call each other: the API writes rows, workers claim rows. Every arrow out of a worker
-goes through `withQuota` (token bucket + circuit breaker rows in `quotas`), except the free ones
-(polling an image job, downloading it, S3).
-
-## Quick start
-
-Needs Docker with Compose v2, Node 22+ and pnpm 10 (`corepack enable` or `npm i -g pnpm@10`).
+Needs Docker Compose v2, Node 22+ and pnpm 10.
 
 ```sh
+corepack enable
 pnpm install
-pnpm demo        # starts the stack (docker compose up -d --build --wait) and runs the acceptance test
+pnpm demo
 ```
 
-`pnpm demo` copies `.env.example` to `.env` when there is none. If port 5432 is taken on your machine,
-set `POSTGRES_PORT=5433` in `.env` (Compose publishes Postgres on it; the tests read it too).
+The demo builds a separate, temporary Compose project with its own image tags, database, object storage
+and random localhost ports. It forces fake providers and demo credentials before starting any service,
+never reads your `.env`, and removes its containers and volumes when it finishes. The normal
+`ryze` project and its data are left alone.
 
-Tests (`pnpm test`) need the Compose Postgres (`docker compose up -d --wait postgres`); each test
-file works in its own throwaway schema. `E2E=1 pnpm test` adds the end-to-end run (the demo with 50
-articles and no kills). The SQL contract can also be checked straight in psql (30 assertions, rolled
-back afterwards):
+For a persistent development stack:
 
 ```sh
-docker compose exec postgres psql -U ryze -d ryze -v ON_ERROR_STOP=1 -f /db/schema_test.sql
+cp .env.example .env
+docker compose up -d --build --wait
+pnpm seed
+curl http://localhost:8080/articles/summary
 ```
 
-## The demo
+Published ports bind to localhost. Set `POSTGRES_PORT` in `.env` if 5432 is already occupied. Worker
+shutdown gets 130 seconds in Compose so ordinary stops can drain calls in flight.
 
-`pnpm demo` (`scripts/demo.ts`) is the acceptance test:
-
-1. `docker compose up -d --build --wait`; the workers and the background reconciler are stopped
-   while the database is emptied and both fakes are reset (`POST /_admin/reset`), so nothing from an
-   earlier run can write into this one.
-2. A WordPress and a Shopify site on the fake platforms, each failing 15 % of its writes with all
-   five fault kinds; the fake providers fail 15 % of the paid calls the same way. Workers start.
-3. `POST /articles/bulk` with 300 articles (150 per site), then the first 20 posted again: 200 and
-   the same ids.
-4. At t+20 s and t+60 s one `worker-generate` and one `worker-publish` container are killed with
-   SIGKILL; Compose must bring each one back.
-5. Wait until no operation is pending or running (15 minutes at most).
-6. Check what the platforms hold before anything cleans up: 300 published, 300 live posts, one post
-   and one media item per article, every post carries its article id, no shared slugs, no drafts
-   left, and each post is its article's own: on its site, with the post id, media id and URL the
-   database recorded and the cover file named after the article.
-7. Run the reconciler once: it must find no stray post.
-8. Every provider charge beyond one per article explained:
-   `text_calls = 300 + complete_then_drop + lost`, where `lost` cannot exceed the text operations
-   still running right after the kills (and never 16); likewise `image_jobs`. No operation failed or
-   unknown.
-
-Sample output (the end of a run; the progress lines every 5 s are cut):
-
-```
-t+22s  kill -9: 244cf52351ae, c369e3ecbc59 (in flight: 0 text, 1 image_submit)
-t+62s  kill -9: 244cf52351ae, c369e3ecbc59 (in flight: 2 text, 2 image_submit)
-...
-t+653s  published 300/300, operations pending or running: 0
-PASS  every killed container was restarted by Compose (4)
-PASS  300 articles published
-PASS  300 live posts on the platforms (found 300)
-PASS  exactly one post per article
-PASS  every live post carries an article_id
-PASS  no two posts share a slug
-PASS  zero drafts left (found 0)
-      media orphans: 0
-PASS  exactly one media item per article
-PASS  each post is its article's, on its site, with its cover, as recorded (300)
-PASS  the reconciler finds no stray post (0)
-      text_calls = 311 = 300 articles + 11 complete_then_drop + 0 lost to kills (≤ 2 in flight)
-PASS  text_calls: every paid-twice call explained
-      image_jobs = 310 = 300 articles + 9 complete_then_drop + 1 lost to kills (≤ 3 in flight)
-PASS  image_jobs: every paid-twice call explained
-PASS  no operation is failed or unknown
-
-outcomes per step (attempts = failed attempts that were retried):
-  step          succeeded  failed  unknown  attempts  max
-  verify              300       0        0         0    0
-  text                300       0        0        33    3
-  image_submit        300       0        0        40    3
-  image_fetch         300       0        0         0    0
-  upload              300       0        0        49    2
-  draft               300       0        0        46    2
-  publish             300       0        0        31    2
-
-provider spend $14.8541; recorded in operations.usage $14.3672; drained in 10.9 min
-
-DEMO PASSED
+```sh
+pnpm lint
+pnpm typecheck
+pnpm test
+E2E=1 pnpm test   # also runs the isolated demo with 50 articles and no kills
 ```
 
-The 15-minute budget is tight by construction: the site buckets (2 calls/s, two calls per
-publish-pool step) put a floor of about 7.5 minutes under the publish phase, and with 15 % faults
-and the 30 s · 2^n backoff, a step that fails three or four times in a row adds 3.5 to 7.5 minutes
-to its article. Runs so far drained in 10.9 and 13.3 minutes; the reviewer's simulation puts roughly 6 % of
-runs past 15 minutes, when a step's retries happen to stack up late in the run.
+Database tests need the development Postgres (`docker compose up -d --wait postgres`). Each file
+creates a throwaway schema; tests do not reset development tables.
 
-The kill is `docker exec <container> sh -c 'kill -9 $(pidof node)'` rather than `docker kill`:
-Docker records `docker kill` as a manual stop and the restart policy then leaves the container down.
-Workers run with `init: true`, so node is not PID 1 and dies exactly as on a crash.
+## Structure
 
-What the demo cannot see, by construction:
-
-- The fake platforms refuse a slug that is taken (as specified), so a second draft for the same
-  article cannot show up there under the same slug; real WordPress accepts one, which is what the
-  lookup before `createDraft` is for (and `exactly one post per article` would catch it).
-- The fakes keep media metadata, not bytes: the cover's content (a 1200×630 JPEG) is checked by the
-  worker's tests, not by the demo.
-- The paid-twice bound cannot tell which worker held which operation, so it counts every text or
-  image_submit operation still running right after a kill.
-
-## Fakes
-
-- **fake-providers** (8091): `POST /v1/text`, `POST /v1/images` (asynchronous jobs, ready after
-  2-5 s), polling and download, `/_admin/counters` (work done and spend, faults by kind),
-  `/_admin/reset`, `/_admin/faults`. Faults hit only the two paid calls.
-- **fake-platforms** (8092): WordPress (`/wordpress/wp/v2/...`) and Shopify
-  (`/shopify/admin/api/2026-10/...`) in memory per token, `/_admin/sites` (register a token and its
-  faults), `/_admin/inspect`, `/_admin/reset`. Faults hit writes (POST/PUT) only: the property
-  under test is that writes are never lost or duplicated; faulty reads would only add retries.
-- Fault kinds: `429` (Retry-After 2), `500`, `timeout` (socket held 40 s; the client gives up at
-  30 s), `slow` (2-10 s, then normal), `complete_then_drop` (the work or write happens, then the
-  socket is destroyed without an answer).
-
-## Reconciler
-
-`worker --mode=reconcile` runs once (Compose loops it every 60 s) and prints a JSON report:
-
-- **Strays**: posts on the platforms that carry one of our article ids although that article
-  recorded a different post. Drafts are deleted through the adapter; live ones are only reported.
-  A post whose article has not recorded any post yet belongs to a draft step still in flight and
-  is left alone. In this version the list comes from the fake's `/_admin/inspect`.
-- **Stuck**: running operations not updated for 15 minutes are logged (leases already make them
-  reclaimable; this is for alerting).
-- **Report**: operations per step and status, articles published, spend summed from
-  `operations.usage`.
-
-## Intake API (port 8080)
-
-Stateless Fastify process: it writes rows and never calls a provider or a platform. No
-authentication in this version.
-
-| Route | Result |
+| Package / path | Responsibility |
 | --- | --- |
-| `POST /sites {platform, base_url, token}` | 201 `{id}`; token stored AES-256-GCM encrypted; creates the site's quota row |
-| `POST /articles {site_id, brief, idempotency_key}` | 202 `{article_id}` when new, 200 with the same id when the key repeats |
-| `POST /articles/bulk {items}` (≤ 1000) | 202 `{results: [{article_id, created}]}`, one transaction, three statements in total |
-| `GET /articles/:id` | the article and its operations |
-| `GET /articles/summary` | operation counts by step and status, articles total and published |
-| `POST /articles/:id/retry` | 202 if the latest operation is `failed` or `unknown`, else 409 |
-| `GET /healthz`, `GET /readyz` | liveness; readiness runs `SELECT 1` (503 when the database is down) |
+| `packages/api` | HTTP intake, site credentials, article status and explicit retries |
+| `packages/worker` | Claim loop, lease lifecycle, pipeline steps and reconciliation |
+| `packages/core` | Validated configuration, database queries, quotas, providers and platform HTTP adapters |
+| `packages/fake-providers` | Fault-injected text and asynchronous image generation |
+| `packages/fake-platforms` | In-memory WordPress and Shopify contracts with fault-injected writes |
+| `db/migrations` | Ordered, checksummed schema migrations |
+| `scripts` | Development seed, isolated acceptance demo, migration and real-account smoke run |
 
-Errors: 400 validation, 404 unknown site or article, 409 inactive site or retry not allowed,
-503 database unavailable (requests are transactional, so a failure never leaves partial rows).
+Tests live beside their modules as `*.spec.ts` and are excluded from production builds. Files use
+kebab case, provider/platform factories use `create...`, and lint requires braces. Keep HTTP routes
+with their domain rather than adding controller/service/repository layers for simple queries.
 
-## Worker
+Service entrypoints validate `process.env` through `core/config.ts`. Credentials and destinations
+belong in the environment; worker limits live in `worker/settings.ts`.
 
-One binary, `packages/worker`: `--pool=generate` runs verify, text, image_submit, image_fetch;
-`--pool=publish` runs upload, draft, publish; `--mode=reconcile` runs the reconciler once.
+Services communicate through database rows. The API never calls a provider or platform.
 
-- **Claim**: `free = CONCURRENCY - in flight`; one `CLAIM` statement (`FOR UPDATE SKIP LOCKED`) takes
-  up to `free` due rows of the pool's steps, or rows whose lease expired, and gives each a new
-  `lease_version`. Sleep 250-500 ms, repeat; no LISTEN/NOTIFY.
-- **Lease**: while a step runs, `RENEW` every `LEASE_SECONDS / 3`; zero rows means another worker
-  owns the row now, so the step is aborted.
-- **Complete**: one transaction writes `succeeded` + usage, the step's own article columns and the
-  next step's row. Every write carries `id = $1 AND lease_version = $2 AND status = 'running'` and
-  must touch exactly one row, otherwise it rolls back and stops.
-- **Failures**: `classify(err)` → deferred (empty bucket / open breaker: back to pending, no attempt
-  counted), transient (retry after `min(1h, 30s·2^n) + 0-30 %`), permanent (failed; 401/403 also
-  marks the site `auth_failed`). A lease that expires on the last attempt becomes `unknown`.
-- **SIGTERM**: stop claiming, wait up to one lease for the steps in flight, exit 0.
+```text
+POST /articles → Postgres operations
+                     ↓ generate pool (2 workers, concurrency 8 each)
+                verify → text → image-submit → image-fetch → object storage
+                     ↓ publish pool (2 workers, concurrency 16 each)
+                upload → draft → publish
+                     ↓
+                WordPress / Shopify
+```
 
-## Steps and their keys
+Synchronous image providers skip `image-submit`; `image-fetch` generates and stores the cover.
+Step names stored in the database remain `image_submit` and `image_fetch`.
 
-Every external effect has a key the next attempt can look up before it spends anything:
+## Intake API
 
-| Step | Checked first (free) | Call | Recorded by COMPLETE |
-| --- | --- | --- | --- |
-| verify | `sites.verified_at` within 10 min | `adapter.verify` | `sites.verified_at` |
-| text | - | `llm.generate(brief)` | title, slug, body_html, image_prompt; usage |
-| image_submit | - | `image.submit(prompt)` | job id → next row's `provider_ref` |
-| image_fetch | `HEAD articles/<id>/cover.jpg` | poll the job (1 s, up to 120 s), download, crop 1200×630 JPEG q80, PUT | usage |
-| upload | `findMedia('ryze-<id>.jpg')` | `uploadMedia` | remote_media_id |
-| draft | `findBySlug(slug)` | `createDraft` (a slug conflict adopts the existing post) | remote_post_id |
-| publish | `getStatus(post)`: already live → keep its URL | `publish` | remote_url, published_at |
+No API authentication or tenant authorization is included. Keep the supplied localhost binding;
+put access control in front of the API before exposing it beyond your machine.
 
-Provider calls go through `withQuota` (`provider:llm` takes 4000 units per article, `provider:image`
-one per job); polling and downloading are free and not metered. Each publish-pool step takes two units
-of `site:<id>` in one go, for its lookup and its write together: if the lookup took its own unit,
-then under contention lookups would keep spending the units the writes wait for, and every write
-would be deferred again and again (the first full demo run stalled exactly like that).
-
-## Real providers and platforms
-
-The same images run against real services; which ones is configuration in `.env`, never code.
-
-| Setting | What runs |
+| Route | Behavior |
 | --- | --- |
-| `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`) | Messages API through `@anthropic-ai/sdk` with `maxRetries: 0` (retries are the worker's), the English system prompt as a cached prefix (`cache_control` on its block), the brief in the user message, structured output `{title, body_html, image_prompt}`, `max_tokens` 4096, `effort: "low"`. The server-side refusal fallback (`fallbacks: "default"`) is on: a brief the model declines is retried on its default fallback model in the same call, and priced by the model that answered. |
-| `IMAGE_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` (default `gpt-image-1`) | Synchronous generation (base64). The pipeline then has no image_submit step: text chains to image_fetch, which generates under the cover's S3 key; its HEAD check is what prevents paying twice. |
-| A WordPress site (`POST /sites`) | `base_url` is the REST root (`https://blog.example.com/wp-json`), `token` is `user:application password`, sent as Basic auth. |
-| A Shopify store (`POST /sites`) | `base_url` is the blog's Admin API root (`https://<store>.myshopify.com/admin/api/2026-10/blogs/<blog id>`), `token` the Admin API access token (sent as `X-Shopify-Access-Token`). The cover goes inline with the article; the site's quota row follows `X-Shopify-Shop-Api-Call-Limit` on every answer. |
+| `POST /sites {platform, base_url, token}` | 201 `{id}`; encrypts credentials with AES-256-GCM and creates a site quota |
+| `PATCH /sites/:id {token}` | Replaces credentials, reactivates the site, clears cached verification and its circuit breaker; returns 200 `{id}` |
+| `POST /articles {site_id, brief, idempotency_key}` | 202 `{article_id}` when new; 200 with the original ID when repeated |
+| `POST /articles/bulk {items}` | Up to 1000 items; transactional intake and per-item `{article_id, created}` results |
+| `GET /articles/:id` | Article and operation status, attempts and errors |
+| `GET /articles/summary` | Aggregate article and operation counts |
+| `POST /articles/:id/retry` | 202 when the latest operation is failed or unknown; otherwise 409 |
+| `GET /healthz`, `GET /readyz` | Liveness; database-backed readiness |
 
-Provider errors map onto the same `HttpError` as everything else (429 and 529/5xx retryable,
-Retry-After honored, other 4xx permanent). Real generation gets a 120 s deadline: a call the client
-gives up on is still billed.
+Site roots must use HTTP(S), with no embedded credentials, query string or fragment. Outbound HTTP
+rejects private network destinations, including resolved DNS addresses; workers allow the exact
+Compose fake-service hostnames. This is independent of API authentication.
 
-WordPress keeps the article id in post meta only if the key is registered; a five-line plugin does
-it (without it the adapter creates the post without the meta and the slug alone identifies it):
+Single and bulk repeated keys return existing articles even if their site has since become inactive.
+New articles require active sites. Bulk requests fail atomically if any new item is invalid.
+
+After repairing a platform credential, replace it with `PATCH /sites/:id`, then explicitly retry the
+failed articles. Unknown operations require checking the platform first: a prior request may have
+succeeded. Credential replacement does not automatically restart articles.
+
+## Execution and recovery
+
+`worker --pool=generate` and `worker --pool=publish` share the runner. Claims use
+`FOR UPDATE SKIP LOCKED`; each claim advances a lease version. Completion atomically records the
+operation result, updates its article fields and creates the next step. Database writes are fenced
+by operation ID, lease version and running status.
+
+Leases renew every third of their duration (120 seconds for generate, 60 for publish). Losing a lease
+aborts the step, including outbound calls, and prevents further external effects. A separate expiry
+watchdog also handles a renewal query that hangs. A request already accepted by a remote service may
+still finish after cancellation.
+
+Transient failures back off from 30 seconds exponentially, capped at one hour plus jitter. Empty
+quota buckets and open circuit breakers defer work without consuming an attempt. Permanent errors
+fail the operation; platform authentication failures also disable the site. Provider credential
+failures leave customer sites active. An expired lease on the last attempt becomes `unknown`.
+
+| Step | Recovery key / behavior |
+| --- | --- |
+| verify | Cached site verification, valid for 10 minutes; concurrent stale checks can both verify |
+| text | Saves title, HTML, image prompt and a slug containing the full article UUID |
+| image_submit | Saves provider job ID for the next step |
+| image_fetch | Polls that job or generates synchronously; checks the article's object key before generating, then crops a 1200×630 JPEG |
+| upload | Looks up `ryze-<article UUID>.jpg` before uploading |
+| draft | Looks up the article slug before creating; rejects a remote post explicitly owned by a different article |
+| publish | Checks whether the recorded remote post is already live before publishing |
+
+Paid provider calls use shared quota rows. Site steps reserve quota for their lookup and write
+together. Image polling, downloading and object storage are free in this model. Shared verification
+timestamps reduce repeated checks, but do not serialize simultaneous verifications.
+
+Text generation or image generation can be paid twice if a worker dies or loses a response after
+the provider accepts work but before its result becomes durable. A database fence cannot make an
+external service transactional. Late remote writes and delayed platform search visibility can also
+create duplicate drafts or media; strict exactly-once publication across arbitrary real platforms
+is not guaranteed.
+
+## Acceptance demo and fakes
+
+`pnpm demo` posts 300 articles across two fake sites, repeats the first 20 intake requests, injects
+15% write/provider faults, and kills one generate and one publish worker at 20 and 60 seconds.
+It checks worker restarts, all articles live, exactly one post and media item per article, matching
+site/post/image identities, no leftover drafts, reconciliation and explained extra provider charges.
+The 15-minute deadline can be exceeded when late retry backoffs accumulate.
+
+Faults are `429` (Retry-After 2), `500`, held connection timeout, slow response, and
+`complete_then_drop` (effect succeeds, response disappears). Fake platform faults apply to writes;
+fake provider faults apply to the two paid calls. Their admin routes expose/reset in-memory state.
+
+The fake contracts are intentionally smaller than real platforms. Fake WordPress rejects duplicate
+slugs where real WordPress may rename them. Shopify covers use the same inline attachment flow
+in both modes. Fake media stores metadata rather than image bytes. Passing this demo establishes
+the supplied fake contracts and does not establish readiness for arbitrary live accounts.
+
+## Real accounts
+
+The persistent stack reads `.env`; restart/recreate services after changing provider configuration.
+
+| Setting | Behavior |
+| --- | --- |
+| `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` | Anthropic Messages API; worker owns retries; structured article output and a concise validated prompt |
+| `IMAGE_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` | Synchronous OpenAI image generation; cover stored under its article key |
+| WordPress `base_url` | REST root, e.g. `https://blog.example.com/wp-json`; token is `user:application password` |
+| Shopify `base_url` | `https://<store>.myshopify.com/admin/api/2026-10/blogs/<blog id>`; token is the Admin API access token |
+
+Real generation has a 120-second deadline. Timing out or canceling does not establish that a call
+was unbilled. Prices are attached only for recognized models; unrecognized model cost stays unknown.
+
+WordPress needs the article ownership meta key registered to preserve that marker. Without it the
+adapter falls back to the UUID-bearing slug:
 
 ```php
 <?php
@@ -240,82 +181,25 @@ add_action('init', fn () => register_post_meta('post', 'ryze_article_id', [
 ]));
 ```
 
-### `pnpm smoke`
+`pnpm smoke` publishes one article per configured real site and incurs provider charges. Configure
+`WORDPRESS_URL`, `WORDPRESS_USER`, `WORDPRESS_APP_PASSWORD` and/or `SHOPIFY_STORE`,
+`SHOPIFY_ACCESS_TOKEN`, `SHOPIFY_BLOG_ID` alongside the real provider keys, then start the persistent
+stack and run it. Live accounts have not been validated by the repository's offline tests.
 
-With real keys and at least one real site in `.env` (`WORDPRESS_URL` / `WORDPRESS_USER` /
-`WORDPRESS_APP_PASSWORD`, `SHOPIFY_STORE` / `SHOPIFY_ACCESS_TOKEN` / `SHOPIFY_BLOG_ID`):
+## Migrations and reconciliation
 
-```sh
-docker compose up -d --wait   # the workers pick the providers from .env
-pnpm smoke                    # registers the site(s), posts one article each, waits, prints URL and cost
-```
+The migration runner records ordered SQL file checksums and uses a transaction-scoped advisory lock
+for concurrent deploys. Applied migrations must stay unchanged; add another file for schema updates.
+An existing database created before version tracking is refused. Back it up and review its schema
+against `db/migrations/001-initial.sql` before explicitly running `pnpm migrate --baseline` with
+`DATABASE_URL` targeting that database. Fresh demo projects need no baseline.
 
-The demo always stays on the fakes: it kills workers and injects faults, which no real account
-should receive. The real paths are covered offline by `packages/core/test/providers.test.ts` (a
-local server stands in for the Messages API; recorded HTTP for OpenAI, Shopify and WordPress); this
-repository was not run against live accounts.
+`worker --mode=reconcile` runs once; Compose repeats it every minute. It reports operation counts,
+published articles, known recorded spend, the count of operations with unknown cost, and running
+operations older than 15 minutes. On the fakes it
+also lists posts through `/_admin/inspect`, deletes stray drafts through quota-controlled adapters,
+and reports live strays for manual review. Individual cleanup failures do not suppress the report;
+the next run can retry them. Real platform enumeration and media-orphan cleanup are not implemented.
 
-## Recovery, step by step
-
-What happens when a worker dies (or the answer is lost) at each point. "Reclaimed" means the lease
-expires (120 s generate, 60 s publish), the next CLAIM takes the row with `attempts + 1`, and the
-dead worker's lease can no longer write anything.
-
-| Step | Dies before the call | Dies after the call, before COMPLETE | Answer lost on the wire |
-| --- | --- | --- | --- |
-| verify | reclaimed, called again | reclaimed; verify is free | retried |
-| text | reclaimed, called once | **paid again** (accepted window) | **paid again**, counted by the demo |
-| image_submit | reclaimed, called once | **a second job** (accepted window) | **a second job**, counted |
-| image_fetch | reclaimed; polls the same job (`provider_ref`) | reclaimed; `HEAD` finds the cover, nothing generated | polling is free; retried |
-| upload | reclaimed, uploads once | reclaimed; `findMedia` finds the file | `findMedia` finds it |
-| draft | reclaimed, creates once | reclaimed; `findBySlug` adopts the post | adopted (a slug conflict also adopts) |
-| publish | reclaimed, publishes once | reclaimed; `getStatus` says live, URL kept | same |
-
-A step's output columns, its `succeeded` and the next row commit together, so there is never a
-done step without its successor or an output without its step.
-
-## Known windows
-
-- **Paying twice** for text or an image job when a worker dies, or the answer is lost, between the
-  provider's answer and COMPLETE. Accepted by design; bounded by the operations in flight
-  (`CONCURRENCY` per killed worker); the demo accounts for every one.
-- **A lease lost while the worker is still alive** (a stall longer than the lease, a partition):
-  the fence stops its database writes, a step that has not started yet is not started, and a step
-  whose renewals keep failing for a whole lease is aborted. A platform call already on the wire can
-  still land after the new owner looked, leaving a duplicate draft (the reconciler removes it) or a
-  duplicate media item.
-- **Search that lags behind writes** on a real platform would let a retry miss its own upload; the
-  fake platforms are strongly consistent.
-- **`unknown`**: a lease that runs out on the last allowed attempt; whether its call happened is not
-  known, so it waits for a human (`POST /articles/:id/retry`, after checking the platform).
-
-## Decisions and deviations
-
-- `db/schema.sql` / `db/schema_test.sql` were not supplied with the spec, so they were written from
-  it. The statements in `packages/core/src/db.ts` are checked against both by a test. Beyond the spec:
-  an `INTAKE` / `BULK INTAKE` section (set-based bulk insert), `QUOTA DRAIN` / `QUOTA SET`, and the
-  definition of `unknown` (an expired lease on the last attempt). `RENEW` does not touch
-  `updated_at`, so the reconciler's "stuck" check means "claimed 15 minutes ago and still running".
-- Each publish-pool step takes 2 units of the site bucket at once (lookup + write); see "Steps".
-- Platform faults hit writes only (see "Fakes").
-- The adapter interface has two additions: `deleteDraft` (the reconciler deletes strays through the
-  adapter) and `image` on `createDraft` (a real Shopify store takes the cover inline). The fakes
-  also answer `GET` by post id (`getStatus` needs it, as on the real platforms).
-- `LlmProvider` carries the model name so usage is priced per model.
-- Workers are killed with `kill -9` inside the container (`init: true`), not `docker kill`.
-- MinIO comes from the Bitnami images; the official ones are no longer pullable.
-- Postgres' host port is `POSTGRES_PORT` (default 5432).
-- The demo empties the database at the start (with the workers stopped), so its counts are its own.
-- A repeated idempotency key answers 200 with its article even if the site was disabled since; a new
-  article needs an active site.
-- The deadline for the drain stays at the spec's 15 minutes although a run occasionally needs longer
-  (see "The demo"); the failure then names the operations still waiting out their backoff.
-
-## Out of scope
-
-As the spec says, not built: Kubernetes, Webflow and Wix adapters, Redis, KMS (AES-GCM with an
-env key stands in), PgBouncer, metrics dashboards, authentication on the API (anyone who can reach
-port 8080 can register sites and post articles), the Batch API mode (the `batches` table exists and
-is unused) and partitioning. The reconciler finds stray posts through the fake platforms'
-`/_admin/inspect`; against real platforms that would be their list endpoints filtered by the
-article-id field, which is not written.
+Other exclusions: Kubernetes, Webflow/Wix, Redis, KMS, PgBouncer, metrics dashboards, batch generation
+(the reserved `batches` table is unused), partitioning and API authentication/authorization.

@@ -7,7 +7,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsc -p tsconfig.json && tsc -p tsconfig.scripts.json"
+    "build": "rm -rf dist && tsc -p tsconfig.json && tsc -p tsconfig.scripts.json"
   },
   "dependencies": {
     "@aws-sdk/client-s3": "^3.1156.0",

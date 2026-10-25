@@ -66,7 +66,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
     timers.add(timer);
   };
   app.addHook('onClose', async () => {
-    for (const timer of timers) clearTimeout(timer);
+    for (const timer of timers) {
+      clearTimeout(timer);
+    }
   });
 
   // Registering a known token again updates its platform and faults and keeps its data.
@@ -122,7 +124,11 @@ export function buildApp(options: AppOptions): FastifyInstance {
   // writes are never duplicated or lost, and faulty reads would only add retries.
   function routeFor(platform: Platform): Route {
     return (handler) => async (request, reply) => {
-      const token = /^Bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
+      const token =
+        platform === 'shopify'
+          ? ((request.headers['x-shopify-access-token'] as string | undefined) ??
+            /^Bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1])
+          : /^Bearer (.+)$/i.exec(request.headers.authorization ?? '')?.[1];
       const site = token === undefined ? undefined : sites.get(token);
       if (site?.platform !== platform) {
         reply.code(401);
@@ -130,7 +136,9 @@ export function buildApp(options: AppOptions): FastifyInstance {
       }
       const write = request.method === 'POST' || request.method === 'PUT';
       const fault = write ? pickFault(site.faults) : undefined;
-      if (fault === undefined) return handler(site, request, reply);
+      if (fault === undefined) {
+        return handler(site, request, reply);
+      }
 
       site.faultsInjected[fault] += 1;
       const { method, url } = request;

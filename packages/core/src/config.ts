@@ -29,12 +29,6 @@ export const workerConfig = z
   .object({
     DATABASE_URL: z.url(),
     SITE_TOKEN_KEY: siteTokenKey,
-    POOL: z.enum(['generate', 'publish']).optional(),
-    CONCURRENCY: positiveInt.optional(), // default 8 (generate) / 16 (publish)
-    IMAGE_CONCURRENCY: positiveInt.default(4),
-    LEASE_SECONDS: positiveInt.optional(), // default 120 (generate) / 60 (publish)
-    MAX_ATTEMPTS: positiveInt.default(8),
-    HTTP_TIMEOUT_MS: positiveInt.default(30_000),
     S3_ENDPOINT: z.url(),
     S3_BUCKET: z.string().min(1),
     S3_ACCESS_KEY: z.string().min(1),
@@ -52,12 +46,22 @@ export const workerConfig = z
   })
   .superRefine((c, ctx) => {
     const need = (key: keyof typeof c, when: string) => {
-      if (!c[key]) ctx.addIssue({ code: 'custom', path: [key], message: `required when ${when}` });
+      if (!c[key]) {
+        ctx.addIssue({ code: 'custom', path: [key], message: `required when ${when}` });
+      }
     };
-    if (c.LLM_PROVIDER === 'fake') need('LLM_BASE_URL', 'LLM_PROVIDER=fake');
-    if (c.LLM_PROVIDER === 'anthropic') need('ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic');
-    if (c.IMAGE_PROVIDER === 'fake') need('IMAGE_BASE_URL', 'IMAGE_PROVIDER=fake');
-    if (c.IMAGE_PROVIDER === 'openai') need('OPENAI_API_KEY', 'IMAGE_PROVIDER=openai');
+    if (c.LLM_PROVIDER === 'fake') {
+      need('LLM_BASE_URL', 'LLM_PROVIDER=fake');
+    }
+    if (c.LLM_PROVIDER === 'anthropic') {
+      need('ANTHROPIC_API_KEY', 'LLM_PROVIDER=anthropic');
+    }
+    if (c.IMAGE_PROVIDER === 'fake') {
+      need('IMAGE_BASE_URL', 'IMAGE_PROVIDER=fake');
+    }
+    if (c.IMAGE_PROVIDER === 'openai') {
+      need('OPENAI_API_KEY', 'IMAGE_PROVIDER=openai');
+    }
   });
 
 export const fakeConfig = z.object({
@@ -85,7 +89,9 @@ export function loadConfig<T extends z.ZodType>(
   // Compose passes `KEY=` as an empty string; treat it as unset.
   const set = Object.fromEntries(Object.entries(env).filter(([, v]) => v !== ''));
   const parsed = schema.safeParse(set);
-  if (parsed.success) return parsed.data;
+  if (parsed.success) {
+    return parsed.data;
+  }
   const lines = parsed.error.issues.map((i) => `  ${i.path.join('.') || '(env)'}: ${i.message}`);
   console.error(`Invalid configuration:\n${lines.join('\n')}`);
   process.exit(1);

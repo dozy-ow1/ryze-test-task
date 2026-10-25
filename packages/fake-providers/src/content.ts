@@ -95,10 +95,14 @@ function titleFor(brief: string, tagline: string): string {
   let topic = '';
   for (const word of brief.match(/[\p{L}\p{N}]+(?:['-][\p{L}\p{N}]+)*/gu) ?? []) {
     const next = topic ? `${topic} ${word}` : word;
-    if (next.length > MAX_TITLE) break;
+    if (next.length > MAX_TITLE) {
+      break;
+    }
     topic = next;
   }
-  if (!topic) return tagline;
+  if (!topic) {
+    return tagline;
+  }
   const title = `${capitalise(topic)}: ${tagline}`;
   return title.length <= MAX_TITLE ? title : capitalise(topic);
 }

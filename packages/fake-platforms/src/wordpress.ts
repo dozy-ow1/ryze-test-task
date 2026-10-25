@@ -131,7 +131,9 @@ export function wordpressRoutes(app: FastifyInstance, route: Route): void {
     { schema: { body: updatePostBody } },
     route((site, request, reply) => {
       const post = findPost(site, (request.params as { id: string }).id);
-      if (!post) return notFound(reply);
+      if (!post) {
+        return notFound(reply);
+      }
       post.url ??= publicUrl(request.host, post.slug);
       return renderPost(post, request.host);
     }),
@@ -142,7 +144,9 @@ export function wordpressRoutes(app: FastifyInstance, route: Route): void {
     postPath,
     route((site, request, reply) => {
       const post = findPost(site, (request.params as { id: string }).id);
-      if (!post) return notFound(reply);
+      if (!post) {
+        return notFound(reply);
+      }
       removePost(site, post);
       return { deleted: true, previous: renderPost(post, request.host) };
     }),

@@ -4,9 +4,10 @@ import pLimit from 'p-limit';
 import { createClients } from './clients.js';
 import { reconcile } from './reconcile.js';
 import { type PoolName, runPool } from './runner.js';
+import { IMAGE_CONCURRENCY, MAX_ATTEMPTS, POOL_LIMITS } from './settings.js';
 import { draft } from './steps/draft.js';
-import { imageFetch } from './steps/image_fetch.js';
-import { imageSubmit } from './steps/image_submit.js';
+import { imageFetch } from './steps/image-fetch.js';
+import { imageSubmit } from './steps/image-submit.js';
 import { publish } from './steps/publish.js';
 import { text } from './steps/text.js';
 import { upload } from './steps/upload.js';
@@ -31,14 +32,13 @@ if (values.mode === 'reconcile') {
   process.exit(0);
 }
 
-const pool = values.pool ?? config.POOL;
+const pool = values.pool;
 if (pool !== 'generate' && pool !== 'publish') {
-  console.error('worker: pass --pool=generate|publish (or set POOL)');
+  console.error('worker: pass --pool=generate|publish');
   process.exit(1);
 }
 const name: PoolName = pool;
-const concurrency = config.CONCURRENCY ?? (name === 'generate' ? 8 : 16);
-const leaseSeconds = config.LEASE_SECONDS ?? (name === 'generate' ? 120 : 60);
+const { concurrency, leaseSeconds } = POOL_LIMITS[name];
 const db = createPool(config.DATABASE_URL, concurrency + 4);
 
 const stop = new AbortController();
@@ -67,9 +67,9 @@ await runPool(
     clients,
     siteTokenKey: config.SITE_TOKEN_KEY,
     leaseSeconds,
-    maxAttempts: config.MAX_ATTEMPTS,
+    maxAttempts: MAX_ATTEMPTS,
     imageKind: clients.image.kind, // a sync provider has no image_submit step
-    imageLimit: pLimit(config.IMAGE_CONCURRENCY),
+    imageLimit: pLimit(IMAGE_CONCURRENCY),
   },
   name,
   concurrency,

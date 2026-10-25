@@ -7,10 +7,11 @@ const ESTIMATED_TOKENS = 4000;
 
 // Nothing to check first: if the worker dies between the answer and COMPLETE, the next attempt
 // pays again. That window is accepted and counted by the demo.
-export const text: StepFn<Clients> = async ({ article, clients }) => {
-  const out = await withQuota(clients.db, 'provider:llm', ESTIMATED_TOKENS, () =>
-    clients.llm.generate({ brief: article.brief }),
-  );
+export const text: StepFn<Clients> = async ({ article, clients, signal }) => {
+  const out = await withQuota(clients.db, 'provider:llm', ESTIMATED_TOKENS, () => {
+    signal.throwIfAborted();
+    return clients.llm.generate({ brief: article.brief }, signal);
+  });
   return {
     usage: textUsage(out.model ?? clients.llm.model, out.usage),
     write: {
@@ -26,7 +27,7 @@ export const text: StepFn<Clients> = async ({ article, clients }) => {
   };
 };
 
-// Lowercase ASCII, at most 80 characters, unique per site because it ends with the article id.
+// Lowercase ASCII, at most 80 characters, unique per site because it ends with the full article id.
 export function slugify(title: string, articleId: string): string {
   const base = title
     .normalize('NFKD')
@@ -34,7 +35,7 @@ export function slugify(title: string, articleId: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, '-')
     .replace(/^-+/, '')
-    .slice(0, 71)
+    .slice(0, 43)
     .replace(/-+$/, '');
-  return `${base || 'article'}-${articleId.slice(0, 8)}`;
+  return `${base || 'article'}-${articleId}`;
 }

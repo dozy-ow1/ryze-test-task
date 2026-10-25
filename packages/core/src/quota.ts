@@ -1,5 +1,6 @@
-import { HttpError } from './adapters/http.js';
-import { type Db, SQL } from './db.js';
+import type { Database } from './database.js';
+import { HttpError } from './platforms/http.js';
+import { SQL } from './queries.js';
 
 // The call has to wait (empty bucket, open breaker). Not an attempt: the operation is deferred.
 export class Deferred extends Error {
@@ -23,8 +24,12 @@ export class Permanent extends Error {
 export type ErrorClass = 'deferred' | 'transient' | 'permanent';
 
 export function classify(err: unknown): ErrorClass {
-  if (err instanceof Deferred) return 'deferred';
-  if (err instanceof Permanent) return 'permanent';
+  if (err instanceof Deferred) {
+    return 'deferred';
+  }
+  if (err instanceof Permanent) {
+    return 'permanent';
+  }
   if (err instanceof HttpError && err.status >= 400 && err.status < 500 && err.status !== 429) {
     return 'permanent';
   }
@@ -46,7 +51,7 @@ interface Take {
 // Runs fn under the scope's token bucket and circuit breaker: one quotas row, shared by every
 // worker. When it must not call, it throws Deferred instead of calling.
 export async function withQuota<T>(
-  db: Db,
+  db: Database,
   scope: string,
   units: number,
   fn: () => Promise<T>,
@@ -56,7 +61,9 @@ export async function withQuota<T>(
   let failures = 0;
   if (!probe) {
     const q = (await db.query<Take>(SQL.QUOTA_TAKE, [scope, units])).rows[0];
-    if (q?.open) throw new Deferred(q.open_until as Date, `breaker open: ${scope}`);
+    if (q?.open) {
+      throw new Deferred(q.open_until as Date, `breaker open: ${scope}`);
+    }
     if (q && !q.allowed) {
       throw new Deferred(new Date(Date.now() + q.wait_sec * 1000), `quota: ${scope}`);
     }
@@ -66,7 +73,9 @@ export async function withQuota<T>(
     const out = await fn();
     // Best effort: losing this write only delays closing the breaker, while throwing here would
     // turn a call that already succeeded (and was paid for) into a retry.
-    if (probe || failures > 0) await db.query(SQL.BREAKER_RESET, [scope]).catch(() => {});
+    if (probe || failures > 0) {
+      await db.query(SQL.BREAKER_RESET, [scope]).catch(() => {});
+    }
     return out;
   } catch (err) {
     if (err instanceof HttpError && err.status === 429) {

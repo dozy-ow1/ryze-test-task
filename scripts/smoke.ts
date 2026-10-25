@@ -5,7 +5,6 @@
 //      SHOPIFY_ACCESS_TOKEN / SHOPIFY_BLOG_ID.
 //   2. docker compose up -d --wait   (the workers read the providers from .env at start)
 // It prints the public URL and what the article cost (from operations.usage).
-import { execSync } from 'node:child_process';
 import { readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
@@ -37,7 +36,12 @@ if (env.LLM_PROVIDER !== 'anthropic' || env.IMAGE_PROVIDER !== 'openai') {
 
 type Article = {
   article: { remote_url: string | null; published_at: string | null };
-  operations: { step: string; status: string; last_error: string | null }[];
+  operations: {
+    step: string;
+    status: string;
+    last_error: string | null;
+    usage: { cost_usd: number | null } | null;
+  }[];
 };
 
 let ok = true;
@@ -55,15 +59,18 @@ for (const s of sites) {
   for (;;) {
     state = (await call<Article>('GET', `${API}/articles/${id}`)).body;
     const stuck = state.operations.find((o) => o.status === 'failed' || o.status === 'unknown');
-    if (state.article.published_at || stuck || Date.now() > deadline) break;
+    if (state.article.published_at || stuck || Date.now() > deadline) {
+      break;
+    }
     await sleep(5_000);
   }
-  const cost = execSync(
-    `docker compose exec -T postgres psql -U ryze -d ryze -tAc "SELECT COALESCE(sum((usage ->> 'cost_usd')::numeric), 0) FROM operations WHERE article_id = '${id}'"`,
-    { encoding: 'utf8' },
-  ).trim();
+  const usage = state.operations.flatMap((operation) => (operation.usage ? [operation.usage] : []));
+  const cost = usage.reduce((sum, entry) => sum + (entry.cost_usd ?? 0), 0);
+  const unknown = usage.filter((entry) => entry.cost_usd === null).length;
   if (state.article.published_at) {
-    console.log(`${s.platform}: live at ${state.article.remote_url} (cost $${cost})`);
+    console.log(
+      `${s.platform}: live at ${state.article.remote_url} (recorded cost $${cost.toFixed(6)}; ${unknown} operations with unknown cost)`,
+    );
   } else {
     ok = false;
     const last = state.operations.at(-1);

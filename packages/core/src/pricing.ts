@@ -1,6 +1,6 @@
 // What provider usage costs. Prices are USD per million tokens; images are a flat price each.
 
-export interface LlmUsage {
+export interface TextUsage {
   input_tokens: number;
   output_tokens: number;
   cache_read_input_tokens?: number;
@@ -14,7 +14,7 @@ interface TokenPrices {
   cacheWrite: number;
 }
 
-// Cache writes are the 5-minute TTL rate (1.25x input). A model missing here is priced as `fake`.
+// Cache writes are the 5-minute TTL rate (1.25x input). A model missing here has an unknown cost.
 export const LLM_PRICES: Record<string, TokenPrices> = {
   fake: { input: 3, output: 15, cacheRead: 0.3, cacheWrite: 3.75 },
   'claude-sonnet-5-5': { input: 2, output: 10, cacheRead: 0.2, cacheWrite: 2.5 },
@@ -23,8 +23,11 @@ export const LLM_PRICES: Record<string, TokenPrices> = {
 
 export const IMAGE_PRICE_USD = 0.04;
 
-export function llmCost(model: string, u: LlmUsage): number {
-  const p = LLM_PRICES[model] ?? LLM_PRICES.fake;
+export function llmCost(model: string, u: TextUsage): number | null {
+  const p = LLM_PRICES[model];
+  if (!p) {
+    return null;
+  }
   const usd =
     (u.input_tokens * p.input +
       u.output_tokens * p.output +
@@ -35,10 +38,10 @@ export function llmCost(model: string, u: LlmUsage): number {
 }
 
 // The shapes stored in operations.usage.
-export function textUsage(model: string, u: LlmUsage) {
-  return { ...u, cost_usd: llmCost(model, u) };
+export function textUsage(model: string, u: TextUsage) {
+  return { ...u, model, cost_usd: llmCost(model, u) };
 }
 
-export function imageUsage() {
-  return { images: 1, cost_usd: IMAGE_PRICE_USD };
+export function imageUsage(model = 'fake') {
+  return { images: 1, model, cost_usd: model === 'fake' ? IMAGE_PRICE_USD : null };
 }

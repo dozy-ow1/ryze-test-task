@@ -9,7 +9,9 @@ const sites = [
   await registerFakeSite('wordpress', faults),
   await registerFakeSite('shopify', faults),
 ];
-for (const s of sites) console.log(`site ${s.platform}: ${s.id}`);
+for (const s of sites) {
+  console.log(`site ${s.platform}: ${s.id}`);
+}
 
 const tag = Date.now().toString(36);
 for (let start = 0; start < count; start += 1000) {

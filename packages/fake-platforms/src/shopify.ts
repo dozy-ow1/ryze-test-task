@@ -33,7 +33,14 @@ const createArticleBody = {
         handle: { type: 'string', minLength: 1 },
         body_html: { type: 'string' },
         published: { type: 'boolean' },
-        image: { type: ['object', 'null'], properties: { media_id: { type: 'integer' } } },
+        image: {
+          type: ['object', 'null'],
+          properties: {
+            media_id: { anyOf: [{ type: 'integer' }, { type: 'string', pattern: '^\\d+$' }] },
+            attachment: { type: 'string', minLength: 1 },
+            filename: { type: 'string', minLength: 1 },
+          },
+        },
         metafields: {
           type: 'array',
           items: {
@@ -56,7 +63,7 @@ interface CreateArticle {
   handle: string;
   body_html?: string;
   published?: boolean;
-  image?: { media_id?: number } | null;
+  image?: { media_id?: number | string; attachment?: string; filename?: string } | null;
   metafields?: { namespace: string; key: string; value: string }[];
 }
 
@@ -123,12 +130,15 @@ export function shopifyRoutes(app: FastifyInstance, route: Route): void {
     { schema: { body: createArticleBody } },
     route((site, request, reply) => {
       const input = (request.body as { article: CreateArticle }).article;
-      const mediaId = input.image?.media_id ?? null;
+      let mediaId = input.image?.media_id == null ? null : Number(input.image.media_id);
       if (mediaId !== null && !site.media.some((m) => m.id === mediaId)) {
         return invalid(reply, 'image', 'media_id does not exist');
       }
       if (site.posts.some((p) => p.slug === input.handle)) {
         return invalid(reply, 'handle', 'has already been taken');
+      }
+      if (input.image?.attachment && input.image.filename) {
+        mediaId = addMedia(site, input.image.filename).id;
       }
       const ryze = input.metafields?.find((m) => m.namespace === 'ryze' && m.key === 'article_id');
       const created = addPost(site, {
@@ -150,7 +160,9 @@ export function shopifyRoutes(app: FastifyInstance, route: Route): void {
     { schema: { body: updateArticleBody } },
     route((site, request, reply) => {
       const article = findPost(site, (request.params as { id: string }).id);
-      if (!article) return notFound(reply);
+      if (!article) {
+        return notFound(reply);
+      }
       article.url ??= publicUrl(request.host, article.slug);
       return { article: renderArticle(article) };
     }),
@@ -160,8 +172,13 @@ export function shopifyRoutes(app: FastifyInstance, route: Route): void {
     articlePath,
     route((site, request, reply) => {
       const article = findPost(site, (request.params as { id: string }).id);
-      if (!article) return notFound(reply);
+      if (!article) {
+        return notFound(reply);
+      }
       removePost(site, article);
+      if (!site.posts.some((post) => post.mediaId === article.mediaId)) {
+        site.media = site.media.filter((media) => media.id !== article.mediaId);
+      }
       return {};
     }),
   );

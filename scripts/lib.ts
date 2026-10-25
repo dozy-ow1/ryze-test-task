@@ -16,12 +16,14 @@ export async function call<T = Record<string, unknown>>(
 ): Promise<{ status: number; body: T }> {
   const res = await fetch(url, {
     method,
+    signal: AbortSignal.timeout(30_000),
     headers: body === undefined ? {} : { 'content-type': 'application/json' },
     body: body === undefined ? undefined : JSON.stringify(body),
   });
   const text = await res.text();
-  if (res.status >= 400)
+  if (res.status >= 400) {
     throw new Error(`${method} ${url}: HTTP ${res.status} ${text.slice(0, 300)}`);
+  }
   return { status: res.status, body: (text ? JSON.parse(text) : {}) as T };
 }
 
@@ -35,14 +37,19 @@ export interface DemoSite {
 export async function registerFakeSite(
   platform: 'wordpress' | 'shopify',
   faults: { rate: number; kinds: string[] },
+  endpoints = { api: API, platforms: PLATFORMS },
 ): Promise<DemoSite> {
   const token = `${platform}-${randomBytes(12).toString('hex')}`;
-  await call('POST', `${PLATFORMS}/_admin/sites`, { token, platform, faults });
+  await call('POST', `${endpoints.platforms}/_admin/sites`, { token, platform, faults });
   const base_url =
     platform === 'wordpress'
       ? `${PLATFORMS_IN_COMPOSE}/wordpress`
       : `${PLATFORMS_IN_COMPOSE}/shopify/admin/api/2026-10/blogs/1`;
-  const site = await call<{ id: string }>('POST', `${API}/sites`, { platform, base_url, token });
+  const site = await call<{ id: string }>('POST', `${endpoints.api}/sites`, {
+    platform,
+    base_url,
+    token,
+  });
   return { id: site.body.id, token, platform };
 }
 

@@ -63,7 +63,9 @@ export function newSite(token: string, platform: Platform, faults: Faults): Site
 export function addMedia(site: Site, filename: string): Media {
   const stem = filename.replace(/\.[^.]*$/, '').toLowerCase();
   let slug = stem;
-  for (let n = 2; site.media.some((m) => m.slug === slug); n++) slug = `${stem}-${n}`;
+  for (let n = 2; site.media.some((m) => m.slug === slug); n++) {
+    slug = `${stem}-${n}`;
+  }
   const media = { id: ++site.lastId, filename, slug };
   site.media.push(media);
   return media;
