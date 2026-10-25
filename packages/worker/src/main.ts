@@ -49,6 +49,7 @@ for (const signal of ['SIGTERM', 'SIGINT'] as const) {
   });
 }
 
+const clients = createClients(config, db);
 log.info({ pool: name, concurrency, lease_seconds: leaseSeconds }, 'worker started');
 await runPool(
   {
@@ -63,11 +64,11 @@ await runPool(
       draft,
       publish,
     },
-    clients: createClients(config, db),
+    clients,
     siteTokenKey: config.SITE_TOKEN_KEY,
     leaseSeconds,
     maxAttempts: config.MAX_ATTEMPTS,
-    imageKind: 'async', // the fake image provider is asynchronous
+    imageKind: clients.image.kind, // a sync provider has no image_submit step
     imageLimit: pLimit(config.IMAGE_CONCURRENCY),
   },
   name,

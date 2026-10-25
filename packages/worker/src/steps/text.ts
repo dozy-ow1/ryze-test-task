@@ -12,7 +12,7 @@ export const text: StepFn<Clients> = async ({ article, clients }) => {
     clients.llm.generate({ brief: article.brief }),
   );
   return {
-    usage: textUsage(clients.llm.model, out.usage),
+    usage: textUsage(out.model ?? clients.llm.model, out.usage),
     write: {
       sql: SQL.WRITE_TEXT,
       params: [

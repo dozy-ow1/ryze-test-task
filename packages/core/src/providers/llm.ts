@@ -6,6 +6,7 @@ export interface LlmResult {
   bodyHtml: string;
   imagePrompt: string;
   usage: LlmUsage;
+  model?: string; // the model that answered, when it may differ (a refusal fallback)
 }
 
 // Identical for the fake and the real provider. `model` names the price list entry.

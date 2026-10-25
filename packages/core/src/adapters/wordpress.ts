@@ -68,25 +68,30 @@ export function wordpress(http: Http): PlatformAdapter {
     },
 
     async createDraft(site, a) {
+      const post = {
+        title: a.title,
+        slug: a.slug,
+        content: a.bodyHtml,
+        status: 'draft',
+        featured_media: Number(a.mediaId),
+        meta: { ryze_article_id: a.articleId },
+      };
+      const create = (json: object) =>
+        getJson<WpPost>(http, url(site, '/posts'), { method: 'POST', headers: auth(site), json });
       try {
-        const post = await getJson<WpPost>(http, url(site, '/posts'), {
-          method: 'POST',
-          headers: auth(site),
-          json: {
-            title: a.title,
-            slug: a.slug,
-            content: a.bodyHtml,
-            status: 'draft',
-            featured_media: Number(a.mediaId),
-            meta: { ryze_article_id: a.articleId },
-          },
-        });
-        return String(post.id);
+        return String((await create(post)).id);
       } catch (err) {
+        if (!(err instanceof HttpError)) throw err;
         // The slug is taken: an earlier attempt created this post. Adopt it.
-        if (err instanceof HttpError && err.status === 409) {
+        if (err.status === 409) {
           const found = await adapter.findBySlug(site, a.slug);
           if (found) return found.id;
+        }
+        // A site without the ryze_article_id meta key registered rejects the field (nothing was
+        // created): create the post without it; the slug alone identifies it then.
+        if (err.status === 400 && err.message.includes('meta')) {
+          const { meta: _meta, ...plain } = post;
+          return String((await create(plain)).id);
         }
         throw err;
       }

@@ -168,6 +168,47 @@ of `site:<id>` in one go, for its lookup and its write together: if the lookup t
 then under contention lookups would keep spending the units the writes wait for, and every write
 would be deferred again and again (the first full demo run stalled exactly like that).
 
+## Real providers and platforms
+
+The same images run against real services; which ones is configuration in `.env`, never code.
+
+| Setting | What runs |
+| --- | --- |
+| `LLM_PROVIDER=anthropic`, `ANTHROPIC_API_KEY`, `ANTHROPIC_MODEL` (default `claude-sonnet-5-5`) | Messages API through `@anthropic-ai/sdk` with `maxRetries: 0` (retries are the worker's), the English system prompt as a cached prefix (`cache_control` on its block), the brief in the user message, structured output `{title, body_html, image_prompt}`, `max_tokens` 4096, `effort: "low"`. The server-side refusal fallback (`fallbacks: "default"`) is on: a brief the model declines is retried on its default fallback model in the same call, and priced by the model that answered. |
+| `IMAGE_PROVIDER=openai`, `OPENAI_API_KEY`, `OPENAI_IMAGE_MODEL` (default `gpt-image-1`) | Synchronous generation (base64). The pipeline then has no image_submit step: text chains to image_fetch, which generates under the cover's S3 key; its HEAD check is what prevents paying twice. |
+| A WordPress site (`POST /sites`) | `base_url` is the REST root (`https://blog.example.com/wp-json`), `token` is `user:application password`, sent as Basic auth. |
+| A Shopify store (`POST /sites`) | `base_url` is the blog's Admin API root (`https://<store>.myshopify.com/admin/api/2026-10/blogs/<blog id>`), `token` the Admin API access token (sent as `X-Shopify-Access-Token`). The cover goes inline with the article; the site's quota row follows `X-Shopify-Shop-Api-Call-Limit` on every answer. |
+
+Provider errors map onto the same `HttpError` as everything else (429 and 529/5xx retryable,
+Retry-After honored, other 4xx permanent). Real generation gets a 120 s deadline: a call the client
+gives up on is still billed.
+
+WordPress keeps the article id in post meta only if the key is registered; a five-line plugin does
+it (without it the adapter creates the post without the meta and the slug alone identifies it):
+
+```php
+<?php
+/* Plugin Name: Ryze article id */
+add_action('init', fn () => register_post_meta('post', 'ryze_article_id', [
+    'type' => 'string', 'single' => true, 'show_in_rest' => true,
+]));
+```
+
+### `pnpm smoke`
+
+With real keys and at least one real site in `.env` (`WORDPRESS_URL` / `WORDPRESS_USER` /
+`WORDPRESS_APP_PASSWORD`, `SHOPIFY_STORE` / `SHOPIFY_ACCESS_TOKEN` / `SHOPIFY_BLOG_ID`):
+
+```sh
+docker compose up -d --wait   # the workers pick the providers from .env
+pnpm smoke                    # registers the site(s), posts one article each, waits, prints URL and cost
+```
+
+The demo always stays on the fakes: it kills workers and injects faults, which no real account
+should receive. The real paths are covered offline by `packages/core/test/providers.test.ts` (a
+local server stands in for the Messages API; recorded HTTP for OpenAI, Shopify and WordPress); this
+repository was not run against live accounts.
+
 ## Notes on inputs
 
 - `db/schema.sql` and `db/schema_test.sql` were not part of the build spec I received, so they were
