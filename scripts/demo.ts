@@ -20,6 +20,7 @@ const SERVICES = [
   'worker-publish',
   'reconciler',
 ];
+const WORKERS = 'worker-generate worker-publish';
 const GENERATE_CONCURRENCY = 8; // worker-generate's CONCURRENCY in docker-compose.yml
 const STEPS = ['verify', 'text', 'image_submit', 'image_fetch', 'upload', 'draft', 'publish'];
 
@@ -37,7 +38,14 @@ type Inspect = {
   sites: {
     token: string;
     media: { id: string; filename: string }[];
-    posts: { id: string; slug: string; status: string; article_id: string | null }[];
+    posts: {
+      id: string;
+      slug: string;
+      status: string;
+      article_id: string | null;
+      media_id: string | null;
+      url: string | null;
+    }[];
   }[];
 };
 
@@ -47,12 +55,33 @@ const psql = (sql: string) =>
   sh(
     `docker compose exec -T postgres psql -U ryze -d ryze -v ON_ERROR_STOP=1 -tAF '|' -c "${sql}"`,
   );
+const restarts = (id: string) => Number(sh(`docker inspect -f '{{.RestartCount}}' ${id}`));
 
-// SIGKILL the worker process inside the container: it dies like a crash, Compose restarts it.
-function kill(service: string): string {
-  const id = sh(`docker compose ps -q ${service}`).split('\n')[0];
-  sh(`docker exec ${id} sh -c 'kill -9 $(pidof node)'`);
-  return id.slice(0, 12);
+// SIGKILL the worker process inside the container: it dies like a crash and Compose restarts the
+// container (`docker kill` would count as a manual stop and leave it down).
+async function kill(service: string): Promise<{ id: string; before: number }> {
+  for (let tries = 0; ; tries++) {
+    const id = sh(`docker compose ps -q ${service}`).split('\n')[0];
+    try {
+      const before = restarts(id);
+      sh(`docker exec ${id} sh -c 'kill -9 $(pidof node)'`);
+      return { id, before };
+    } catch (err) {
+      if (tries === 5) throw err;
+      await sleep(1_000); // the container is restarting; take the next running one
+    }
+  }
+}
+
+async function cameBack({ id, before }: { id: string; before: number }): Promise<boolean> {
+  for (let i = 0; i < 30; i++) {
+    const [count, running] = sh(
+      `docker inspect -f '{{.RestartCount}} {{.State.Running}}' ${id}`,
+    ).split(' ');
+    if (Number(count) > before && running === 'true') return true;
+    await sleep(1_000);
+  }
+  return false;
 }
 
 const busy = (s: Summary) =>
@@ -69,9 +98,12 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
   console.log('starting the stack (docker compose up -d --build --wait) ...');
   sh(`docker compose up -d --build --wait ${SERVICES.join(' ')}`);
 
-  // A clean slate: the demo's assertions count everything in the database and in the fakes.
+  // A clean slate, with nothing running that could still write into it: the demo's assertions
+  // count everything in the database and in the fakes. The background reconciler stays off until
+  // the end so it cannot quietly delete a stray draft before the checks see it.
+  sh(`docker compose stop ${WORKERS} reconciler`);
   psql(
-    `TRUNCATE operations, articles, sites, batches RESTART IDENTITY CASCADE;
+    `TRUNCATE operations, articles, sites, batches CASCADE;
      DELETE FROM quotas WHERE scope LIKE 'site:%';
      UPDATE quotas SET tokens = capacity, tokens_at = now(), failures = 0, open_until = NULL;`,
   );
@@ -83,6 +115,7 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
     await registerFakeSite('wordpress', faults),
     await registerFakeSite('shopify', faults),
   ];
+  sh(`docker compose start ${WORKERS}`);
 
   const items = Array.from({ length: articles }, (_, n) => ({
     site_id: sites[n % 2].id,
@@ -109,12 +142,26 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
   const started = Date.now();
   const killAt = kills ? [20, 60] : [];
   const elapsed = () => (Date.now() - started) / 1000;
+  // Paid calls a kill can cost: the text and image_submit operations still running right after
+  // it (the dead worker's stay running until their leases expire).
+  const inFlight = { text: 0, image_submit: 0 };
+  const killed: { id: string; before: number }[] = [];
   let summary: Summary;
   for (;;) {
     while (killAt.length && elapsed() >= killAt[0]) {
       killAt.shift();
-      const victims = ['worker-generate', 'worker-publish'].map((s) => `${s} ${kill(s)}`);
-      console.log(`t+${elapsed().toFixed(0)}s  kill -9: ${victims.join(', ')}`);
+      const round = [await kill('worker-generate'), await kill('worker-publish')];
+      killed.push(...round);
+      const [text, submits] = psql(
+        `SELECT count(*) FILTER (WHERE step = 'text'), count(*) FILTER (WHERE step = 'image_submit')
+         FROM operations WHERE status = 'running'`,
+      ).split('|');
+      inFlight.text += Number(text);
+      inFlight.image_submit += Number(submits);
+      const victims = round.map((k) => k.id.slice(0, 12)).join(', ');
+      console.log(
+        `t+${elapsed().toFixed(0)}s  kill -9: ${victims} (in flight: ${text} text, ${submits} image_submit)`,
+      );
     }
     summary = (await call<Summary>('GET', `${API}/articles/summary`)).body;
     const open = busy(summary);
@@ -124,6 +171,12 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
     );
     if (open === 0 && !killAt.length) break;
     if (elapsed() > deadlineMinutes * 60) {
+      const late = psql(
+        `SELECT step || ' attempts ' || attempts || ', next try in ' ||
+                greatest(0, round(EXTRACT(EPOCH FROM due_at - now()))) || ' s'
+         FROM operations WHERE status IN ('pending', 'running') ORDER BY due_at LIMIT 5`,
+      );
+      console.log(`      still open (retry backoff): ${late.split('\n').join('; ')}`);
       check(false, `the pipeline drains within ${deadlineMinutes} minutes`);
       break;
     }
@@ -131,14 +184,22 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
     await sleep(Math.max(0.5, Math.min(5, nextKill)) * 1000);
   }
   const minutes = (elapsed() / 60).toFixed(1);
+  if (kills) {
+    const back = await Promise.all(killed.map(cameBack));
+    check(
+      back.every(Boolean),
+      `every killed container was restarted by Compose (${killed.length})`,
+    );
+  }
 
-  console.log('reconciler: docker compose run --rm reconciler node dist/main.js --mode=reconcile');
-  const reconcileOut = sh('docker compose run --rm reconciler node dist/main.js --mode=reconcile');
-  const reportLine = reconcileOut.split('\n').find((l) => l.includes('"spend_usd"')) ?? '{}';
-  const report = JSON.parse(reportLine);
-
-  // What the platforms hold.
+  // What the platforms hold, before the reconciler has had any chance to clean up.
   const inspect = (await call<Inspect>('GET', `${PLATFORMS}/_admin/inspect`)).body;
+  const recorded = new Map(
+    psql('SELECT id, site_id, remote_media_id, remote_post_id, remote_url FROM articles')
+      .split('\n')
+      .map((line) => line.split('|'))
+      .map(([id, siteId, mediaId, postId, url]) => [id, { siteId, mediaId, postId, url }]),
+  );
   const ours = new Set(ids);
   const postsOf = new Map<string, number>();
   const mediaOf = new Map<string, number>();
@@ -147,7 +208,10 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
   let unmarked = 0;
   let sharedSlugs = 0;
   let foreignMedia = 0;
+  let consistent = 0;
   for (const site of inspect.sites.filter((s) => sites.some((d) => d.token === s.token))) {
+    const siteId = sites.find((d) => d.token === site.token)?.id;
+    const media = new Map(site.media.map((m) => [m.id, m.filename]));
     const slugs = new Set<string>();
     for (const p of site.posts) {
       if (p.status === 'live') live++;
@@ -156,11 +220,26 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
       else postsOf.set(p.article_id, (postsOf.get(p.article_id) ?? 0) + 1);
       if (slugs.has(p.slug)) sharedSlugs++;
       slugs.add(p.slug);
+      // The article's own post, on its own site, with its own cover, as the database recorded it.
+      const mine = p.article_id ? recorded.get(p.article_id) : undefined;
+      if (
+        mine &&
+        mine.siteId === siteId &&
+        mine.postId === p.id &&
+        mine.mediaId === p.media_id &&
+        mine.url === p.url &&
+        media.get(p.media_id ?? '') === `ryze-${p.article_id}.jpg`
+      ) {
+        consistent++;
+      }
     }
     for (const m of site.media) {
       const id = /^ryze-(.+)\.jpg$/.exec(m.filename)?.[1];
-      if (id && ours.has(id)) mediaOf.set(id, (mediaOf.get(id) ?? 0) + 1);
-      else foreignMedia++;
+      if (id && ours.has(id) && recorded.get(id)?.siteId === siteId) {
+        mediaOf.set(id, (mediaOf.get(id) ?? 0) + 1);
+      } else {
+        foreignMedia++;
+      }
     }
   }
   const once = (m: Map<string, number>) => ids.filter((id) => m.get(id) === 1).length;
@@ -174,19 +253,35 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
   check(drafts === 0, `zero drafts left (found ${drafts})`);
   console.log(`      media orphans: ${orphans}`);
   check(once(mediaOf) === articles && orphans === 0, 'exactly one media item per article');
+  check(
+    consistent === articles,
+    `each post is its article's, on its site, with its cover, as recorded (${consistent})`,
+  );
+
+  console.log('reconciler: docker compose run --rm reconciler node dist/main.js --mode=reconcile');
+  const reconcileOut = sh('docker compose run --rm reconciler node dist/main.js --mode=reconcile');
+  sh('docker compose start reconciler');
+  const reportLine = reconcileOut.split('\n').find((l) => l.includes('"spend_usd"')) ?? '{}';
+  const report = JSON.parse(reportLine);
+  check(report.strays?.found === 0, `the reconciler finds no stray post (${report.strays?.found})`);
 
   // What the providers charged, and why anything beyond one call per article happened.
   const counters = (await call<Counters>('GET', `${PROVIDERS}/_admin/counters`)).body;
-  const bound = kills ? GENERATE_CONCURRENCY * 2 : 0;
-  const money = (calls: number, drops: number, what: string) => {
-    const killed = calls - articles - drops;
+  const money = (calls: number, drops: number, running: number, what: string) => {
+    const lost = calls - articles - drops;
+    const bound = Math.min(running, kills ? GENERATE_CONCURRENCY * 2 : 0);
     console.log(
-      `      ${what} = ${calls} = ${articles} articles + ${drops} complete_then_drop + ${killed} lost to kills`,
+      `      ${what} = ${calls} = ${articles} articles + ${drops} complete_then_drop + ${lost} lost to kills (≤ ${bound} in flight)`,
     );
-    check(killed >= 0 && killed <= bound, `${what}: paid-twice calls explained (kills ≤ ${bound})`);
+    check(lost >= 0 && lost <= bound, `${what}: every paid-twice call explained`);
   };
-  money(counters.text_calls, counters.faults.text.complete_then_drop, 'text_calls');
-  money(counters.image_jobs, counters.faults.image_submit.complete_then_drop, 'image_jobs');
+  money(counters.text_calls, counters.faults.text.complete_then_drop, inFlight.text, 'text_calls');
+  money(
+    counters.image_jobs,
+    counters.faults.image_submit.complete_then_drop,
+    inFlight.image_submit,
+    'image_jobs',
+  );
 
   const stuck = STEPS.reduce(
     (n, s) => n + (summary.operations[s]?.failed ?? 0) + (summary.operations[s]?.unknown ?? 0),
@@ -210,8 +305,7 @@ export async function runDemo({ articles = 300, kills = true, deadlineMinutes = 
   }
   console.log(
     `\nprovider spend $${counters.spend_usd.toFixed(4)}; recorded in operations.usage ` +
-      `$${Number(report.spend_usd ?? 0).toFixed(4)}; stray drafts deleted by the reconciler: ` +
-      `${report.strays?.deleted ?? 'n/a'}; drained in ${minutes} min`,
+      `$${Number(report.spend_usd ?? 0).toFixed(4)}; drained in ${minutes} min`,
   );
   console.log(failures.length ? `\nDEMO FAILED: ${failures.join('; ')}` : '\nDEMO PASSED');
   return failures.length === 0;
