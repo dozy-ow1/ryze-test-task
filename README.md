@@ -59,6 +59,24 @@ One binary, `packages/worker`: `--pool=generate` runs verify, text, image_submit
   marks the site `auth_failed`). A lease that expires on the last attempt becomes `unknown`.
 - **SIGTERM**: stop claiming, wait up to one lease for the steps in flight, exit 0.
 
+## Steps and their keys
+
+Every external effect has a key the next attempt can look up before it spends anything:
+
+| Step | Checked first (free) | Call | Recorded by COMPLETE |
+| --- | --- | --- | --- |
+| verify | `sites.verified_at` within 10 min | `adapter.verify` | `sites.verified_at` |
+| text | - | `llm.generate(brief)` | title, slug, body_html, image_prompt; usage |
+| image_submit | - | `image.submit(prompt)` | job id → next row's `provider_ref` |
+| image_fetch | `HEAD articles/<id>/cover.jpg` | poll the job (1 s, up to 120 s), download, crop 1200×630 JPEG q80, PUT | usage |
+| upload | `findMedia('ryze-<id>.jpg')` | `uploadMedia` | remote_media_id |
+| draft | `findBySlug(slug)` | `createDraft` (a slug conflict adopts the existing post) | remote_post_id |
+| publish | `getStatus(post)`: already live → keep its URL | `publish` | remote_url, published_at |
+
+Provider calls go through `withQuota` (`provider:llm` takes 4000 units per article, `provider:image`
+one per job); polling and downloading are free and not metered. Platform calls take one unit of
+`site:<id>` each.
+
 ## Notes on inputs
 
 - `db/schema.sql` and `db/schema_test.sql` were not part of the build spec I received, so they were

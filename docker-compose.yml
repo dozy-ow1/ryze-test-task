@@ -96,6 +96,10 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+      minio-init:
+        condition: service_completed_successfully
+      fake-providers:
+        condition: service_healthy
 
   worker-publish:
     <<: *worker
@@ -110,6 +114,26 @@ services:
     depends_on:
       migrate:
         condition: service_completed_successfully
+
+  fake-providers:
+    build:
+      context: .
+      dockerfile: deploy/docker/Dockerfile
+      args:
+        PKG: fake-providers
+    image: ryze-fake-providers
+    env_file: .env
+    environment:
+      PORT: 8091
+    ports:
+      - "8091:8091"
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "wget", "-qO-", "http://127.0.0.1:8091/healthz"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
 
 volumes:
   pgdata:

@@ -6,3 +6,5 @@ export * from './log.js';
 export * from './pricing.js';
 export * from './quota.js';
 export * from './secrets.js';
+export * from './providers/image.js';
+export * from './providers/llm.js';

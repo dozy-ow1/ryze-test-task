@@ -1,8 +1,12 @@
 import { parseArgs } from 'node:util';
 import { createLogger, createPool, loadConfig, workerConfig } from '@ryze/core';
 import pLimit from 'p-limit';
+import { createClients } from './clients.js';
 import { type PoolName, runPool } from './runner.js';
+import { imageFetch } from './steps/image_fetch.js';
+import { imageSubmit } from './steps/image_submit.js';
 import { stubSteps } from './steps/stub.js';
+import { text } from './steps/text.js';
 
 // One binary: --pool=generate|publish runs a step pool; --mode=reconcile runs the reconciler once.
 const { values } = parseArgs({ options: { pool: { type: 'string' }, mode: { type: 'string' } } });
@@ -32,12 +36,13 @@ await runPool(
   {
     db,
     log: log.child({ pool: name }),
-    steps: stubSteps,
-    clients: {},
+    // verify, upload, draft and publish need the platform adapters (milestone 5).
+    steps: { ...stubSteps, text, image_submit: imageSubmit, image_fetch: imageFetch },
+    clients: createClients(config, db),
     siteTokenKey: config.SITE_TOKEN_KEY,
     leaseSeconds,
     maxAttempts: config.MAX_ATTEMPTS,
-    imageKind: 'async',
+    imageKind: 'async', // the fake image provider is asynchronous
     imageLimit: pLimit(config.IMAGE_CONCURRENCY),
   },
   name,
