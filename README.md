@@ -40,7 +40,6 @@ Ports bind to localhost: API **8080**, mock providers **8091**, mock Shopify **8
 | `packages/shared` | Shared database, provider, platform and utility code |
 | `packages/shared/src/database/migrations` | Ordered, checksummed SQL migrations |
 | `tools/development` | Demo, seed data and real-account smoke commands |
-| `tools/formatting` | Formatting conventions layered over Biome |
 
 Runnable services live in `apps`; reusable code lives in `packages`. Each service starts in
 `src/main.ts`. Features live under `src/modules`; worker queue/lease mechanics live under
@@ -55,14 +54,11 @@ from production builds. The shared package keeps SQL beside its database code an
 | --- | --- |
 | `pnpm test` | Unit/database tests; needs local Postgres and uses disposable schemas |
 | `pnpm typecheck` | Clean builds and TypeScript checks |
-| `pnpm lint` / `pnpm format` | Check/apply formatting and lint rules |
 | `pnpm migrate` | Apply shared SQL migrations to `DATABASE_URL` |
 | `pnpm seed` | Register mock sites and submit sample articles |
 | `pnpm demo` | Isolated acceptance run; `E2E=1 pnpm test` adds a smaller run without kills |
 | `pnpm smoke` | Publish to configured **real accounts**, incurring provider charges |
 
-`biome.json` defines formatting and lint rules, including indentation, quotes and required braces.
-The formatting tool preserves single-line imports and separates logical blocks; it runs Biome once.
 Application settings come from `.env` and are validated at startup. Recreate workers after changing
 provider settings. Provider selection happens once
 in the client factory. Worker limits live in [`settings.ts`](apps/worker/src/settings.ts).

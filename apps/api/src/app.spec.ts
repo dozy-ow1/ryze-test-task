@@ -309,13 +309,11 @@ describe('database unavailable', () => {
     const flaky = createPool(t.url, 2);
     flaky.on('connect', (client) => {
       const query = client.query.bind(client) as (...args: unknown[]) => Promise<unknown>;
-      // biome-ignore lint/suspicious/noExplicitAny: pg's query() is heavily overloaded
       (client as any).query = (...args: unknown[]) => {
         if (args[0] !== SQL.INTAKE_OP) {
           return query(...args);
         }
 
-        // biome-ignore lint/suspicious/noExplicitAny: processID is missing from the typings
         const pid = (client as any).processID;
 
         return killer.query('SELECT pg_terminate_backend($1)', [pid]).then(() => query(...args));
