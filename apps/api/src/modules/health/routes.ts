@@ -1,4 +1,4 @@
-import type { Database } from '@ryze/core';
+import type { Database } from '@ryze/shared/database/client';
 import type { FastifyPluginAsync } from 'fastify';
 
 export const healthRoutes: FastifyPluginAsync<{ db: Database }> = async (app, { db }) => {

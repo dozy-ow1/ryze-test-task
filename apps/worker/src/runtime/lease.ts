@@ -1,4 +1,4 @@
-import { type Database, LeaseLost, type Logger, type Operation, renew } from '@ryze/core';
+import { type Database, LeaseLost, type Logger, type Operation, renew } from '@ryze/shared';
 
 const RENEWALS_PER_LEASE = 3;
 

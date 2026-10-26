@@ -1,5 +1,4 @@
-import { setTimeout as sleep } from 'node:timers/promises';
-import { imageUsage, Permanent, withQuota } from '@ryze/core';
+import { Deferred, imageUsage, Permanent, withQuota } from '@ryze/shared';
 import sharp from 'sharp';
 import type { Clients } from '../../infrastructure/clients.js';
 import { coverKey } from '../../infrastructure/store.js';
@@ -9,7 +8,7 @@ const POLL_EVERY_MS = 1_000;
 const POLL_FOR_MS = 120_000;
 
 // The cover's key is fixed by the article id: if an earlier attempt stored it, nothing is paid
-// again. Otherwise wait for the job (async provider) or generate (sync), crop and store.
+// again. Otherwise check the job (async provider) or generate (sync), crop and store.
 export const imageFetch: StepFn<Clients> = async (ctx) => {
   const { article, clients, signal } = ctx;
   signal.throwIfAborted();
@@ -22,9 +21,7 @@ export const imageFetch: StepFn<Clients> = async (ctx) => {
   signal.throwIfAborted();
 
   const raw =
-    clients.image.kind === 'sync'
-      ? await generate(ctx)
-      : await waitForJob(ctx, ctx.op.provider_ref);
+    clients.image.kind === 'sync' ? await generate(ctx) : await fetchJob(ctx, ctx.op.provider_ref);
   signal.throwIfAborted();
   const cover = await sharp(raw)
     .resize(1200, 630, { fit: 'cover' })
@@ -53,8 +50,8 @@ async function generate({ article, clients, signal }: StepContext<Clients>): Pro
 }
 
 // Polling is free, so it is not metered. A job the provider does not know (404) is permanent.
-async function waitForJob(
-  { clients, signal }: StepContext<Clients>,
+async function fetchJob(
+  { clients, signal, op }: StepContext<Clients>,
   jobId: string | null,
 ): Promise<Buffer> {
   const poll = clients.image.poll;
@@ -63,21 +60,26 @@ async function waitForJob(
     throw new Permanent('no image job to wait for');
   }
 
-  const deadline = Date.now() + POLL_FOR_MS;
+  signal.throwIfAborted();
+  const job = await poll(jobId, signal);
+  signal.throwIfAborted();
 
-  for (;;) {
-    signal.throwIfAborted();
-    const job = await poll(jobId, signal);
-    signal.throwIfAborted();
-
-    if (job.status === 'done' && job.url) {
-      return (await clients.http(job.url, { signal })).body;
+  if (job.status === 'done') {
+    if (!job.url) {
+      throw new Permanent('completed image job has no download URL');
     }
 
-    if (Date.now() >= deadline) {
-      throw new Error(`image job ${jobId} not done after 120 s`);
-    }
-
-    await sleep(POLL_EVERY_MS, undefined, { signal });
+    return (await clients.http(job.url, { signal })).body;
   }
+
+  const deadline = op.created_at.getTime() + POLL_FOR_MS;
+
+  if (Date.now() >= deadline) {
+    throw new Permanent(`image job ${jobId} did not finish within ${POLL_FOR_MS / 1000} seconds`);
+  }
+
+  throw new Deferred(
+    new Date(Math.min(Date.now() + POLL_EVERY_MS, deadline)),
+    'image job still pending',
+  );
 }

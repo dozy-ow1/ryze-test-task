@@ -1,4 +1,4 @@
-import type { FaultKind } from '@ryze/core';
+import type { FaultKind } from '@ryze/shared';
 import type { FastifyInstance, FastifyReply, FastifyRequest, RouteHandlerMethod } from 'fastify';
 import type { Faults, Site } from './state.js';
 

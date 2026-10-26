@@ -1,8 +1,8 @@
-import { classify, createHttp, createLogger, createShopify, HttpError, isAuthError, type Site } from '@ryze/core';
+import { classify, createHttp, createLogger, createShopify, HttpError, isAuthError, type Site, SQL } from '@ryze/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../../../packages/core/testing/database.js';
+import { type TestDb, testDb } from '../../../../../packages/shared/src/testing/database.js';
 import { buildApp } from '../../../../mock-shopify/src/app.js';
-import { inspect as inspectShopify, mockCredentials, registerSite } from '../../../../mock-shopify/testing/helpers.js';
+import { inspect as inspectShopify, mockCredentials, registerSite } from '../../../../mock-shopify/src/testing/helpers.js';
 import type { Clients } from '../../infrastructure/clients.js';
 import { coverKey, type Store } from '../../infrastructure/store.js';
 import type { StepContext, StepFn } from '../../runtime/types.js';
@@ -39,8 +39,11 @@ async function site(dropWrites = false): Promise<Site> {
   const token = mockCredentials(`shopify-${Math.random().toString(36).slice(2)}`);
   await register(token, dropWrites);
 
+  const id = crypto.randomUUID();
+  await t.db.query(SQL.SITE_QUOTA, [`site:${id}`, 100, 100]);
+
   return {
-    id: crypto.randomUUID(),
+    id,
     platform: 'shopify',
     base_url: 'https://test-store.myshopify.com',
     token,
@@ -150,6 +153,7 @@ describe('Shopify steps when a write answer is lost', () => {
         attempts: 0,
         lease_version: 1,
         provider_ref: null,
+        created_at: new Date(),
       },
       article,
       site: { ...s, verified_at: null },
@@ -216,6 +220,7 @@ describe('upload', () => {
         attempts: 1,
         lease_version: 2,
         provider_ref: null,
+        created_at: new Date(),
       },
       article: {
         id: articleId,
@@ -239,47 +244,47 @@ describe('upload', () => {
 });
 
 describe('draft ownership', () => {
-  it('rejects a matching slug belonging to another article', async () => {
-    const s = await site();
-    await t.db.query(
-      'INSERT INTO quotas (scope, capacity, refill, tokens) VALUES ($1, 10, 2, 10)',
-      [`site:${s.id}`],
-    );
-    let created = false;
+  it.each([null, 'foreign-article'])(
+    'rejects a matching slug without our ownership marker: %s',
+    async (articleIdMarker) => {
+      const s = await site();
 
-    const adapter = {
-      findBySlug: async () => ({
-        id: 'foreign-post',
-        status: 'draft' as const,
-        articleId: crypto.randomUUID(),
-      }),
+      let created = false;
 
-      createDraft: async () => {
-        created = true;
+      const adapter = {
+        findBySlug: async () => ({
+          id: 'foreign-post',
+          status: 'draft' as const,
+          articleId: articleIdMarker,
+        }),
 
-        return 'new-post';
-      },
-    };
+        createDraft: async () => {
+          created = true;
 
-    const articleId = crypto.randomUUID();
+          return 'new-post';
+        },
+      };
 
-    const ctx = {
-      article: {
-        id: articleId,
-        site_id: s.id,
-        brief: 'b',
-        title: 'Title',
-        slug: `title-${articleId}`,
-        body_html: '<p>body</p>',
-        image_prompt: 'image',
-        remote_media_id: 'media',
-        remote_post_id: null,
-      },
-      site: { ...s, verified_at: null },
-      clients: { db: t.db, platform: adapter } as unknown as Clients,
-      signal: new AbortController().signal,
-    } as StepContext<Clients>;
-    await expect(draft(ctx)).rejects.toThrow('slug belongs to another article');
-    expect(created).toBe(false);
-  });
+      const articleId = crypto.randomUUID();
+
+      const ctx = {
+        article: {
+          id: articleId,
+          site_id: s.id,
+          brief: 'b',
+          title: 'Title',
+          slug: `title-${articleId}`,
+          body_html: '<p>body</p>',
+          image_prompt: 'image',
+          remote_media_id: 'media',
+          remote_post_id: null,
+        },
+        site: { ...s, verified_at: null },
+        clients: { db: t.db, platform: adapter } as unknown as Clients,
+        signal: new AbortController().signal,
+      } as StepContext<Clients>;
+      await expect(draft(ctx)).rejects.toThrow('slug belongs to another article');
+      expect(created).toBe(false);
+    },
+  );
 });

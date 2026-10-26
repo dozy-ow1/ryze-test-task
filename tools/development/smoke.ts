@@ -1,11 +1,15 @@
 // Publishes one article to the configured Shopify blog. This command writes publicly visible content.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { setTimeout as sleep } from 'node:timers/promises';
 import { parseEnv } from 'node:util';
-import { normalizeShopifyShop } from '@ryze/core';
+import { normalizeShopifyShop } from '@ryze/shared';
 import { API, call } from './client.js';
 
-const env = { ...parseEnv(readFileSync('.env', 'utf8')), ...process.env };
+const env = {
+  ...(existsSync('.env') ? parseEnv(readFileSync('.env', 'utf8')) : {}),
+  ...process.env,
+};
+
 const shop = normalizeShopifyShop(env.SHOPIFY_SHOP ?? '');
 
 if (!shop || !env.SHOPIFY_CLIENT_ID || !env.SHOPIFY_CLIENT_SECRET || !env.SHOPIFY_BLOG_ID) {

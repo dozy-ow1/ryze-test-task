@@ -1,4 +1,4 @@
-import { classify, complete, type Deferred, decryptToken, defer, fail, isAuthError, LeaseLost, type Operation, Permanent, retry, type Step } from '@ryze/core';
+import { classify, complete, type Deferred, decryptToken, defer, type ErrorClass, fail, isAuthError, LeaseLost, type Operation, Permanent, retry, type Step } from '@ryze/shared';
 import { keepLease } from './lease.js';
 import type { Runner, StepContext } from './types.js';
 import { nextStep } from './workflow.js';
@@ -20,7 +20,9 @@ const LOAD = `
   FROM articles a JOIN sites s ON s.id = a.site_id
   WHERE a.id = $1`;
 
-export async function runOperation<C>(r: Runner<C>, op: Operation): Promise<string> {
+export type OperationOutcome = 'succeeded' | 'deferred' | 'retry' | 'failed' | 'lost_lease';
+
+export async function runOperation<C>(r: Runner<C>, op: Operation): Promise<OperationOutcome> {
   const log = r.log.child({
     article_id: op.article_id,
     op_id: op.id,
@@ -34,13 +36,18 @@ export async function runOperation<C>(r: Runner<C>, op: Operation): Promise<stri
   const stopRenewing = keepLease(r.db, op, r.leaseSeconds, lease, log);
   let siteId: string | undefined;
   let siteToken: Buffer | undefined;
-  let outcome: string;
-  let errorClass: string | undefined;
+  let outcome: OperationOutcome;
+  let errorClass: ErrorClass | undefined;
 
   try {
     const { rows } = await r.db.query(LOAD, [op.article_id]);
 
     const row = rows[0];
+
+    if (!row) {
+      throw new Permanent('article does not exist');
+    }
+
     siteId = row.site_id;
     siteToken = row.token_enc;
 
@@ -122,10 +129,10 @@ async function settle<C>(
   r: Runner<C>,
   op: Operation,
   err: unknown,
-  kind: string,
+  kind: ErrorClass,
   siteId: string | undefined,
   siteToken: Buffer | undefined,
-): Promise<string> {
+): Promise<OperationOutcome> {
   const message = describe(err);
 
   if (kind === 'deferred') {

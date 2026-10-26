@@ -1,6 +1,7 @@
-import { Permanent, SQL, withQuota } from '@ryze/core';
+import { Permanent, SQL, withQuota } from '@ryze/shared';
 import type { Clients } from '../../infrastructure/clients.js';
 import type { StepFn } from '../../runtime/types.js';
+import { SITE_REQUEST_UNITS } from '../../settings.js';
 
 // The slug is the key: a draft whose answer was lost is adopted instead of created twice. Lookup
 // and creation share one take of the site's bucket, like upload.
@@ -13,32 +14,37 @@ export const draft: StepFn<Clients> = async ({ article, site, clients, signal })
 
   const adapter = clients.platform;
 
-  const postId = await withQuota(clients.db, `site:${site.id}`, 2, async () => {
-    signal.throwIfAborted();
-    const existing = await adapter.findBySlug(site, slug, signal);
+  const postId = await withQuota(
+    clients.db,
+    `site:${site.id}`,
+    SITE_REQUEST_UNITS.draft,
+    async () => {
+      signal.throwIfAborted();
+      const existing = await adapter.findBySlug(site, slug, signal);
 
-    if (existing) {
-      if (existing.articleId && existing.articleId !== article.id) {
-        throw new Permanent('slug belongs to another article');
+      if (existing) {
+        if (existing.articleId !== article.id) {
+          throw new Permanent('slug belongs to another article');
+        }
+
+        return existing.id;
       }
 
-      return existing.id;
-    }
+      signal.throwIfAborted();
 
-    signal.throwIfAborted();
-
-    return adapter.createDraft(
-      site,
-      {
-        title,
-        slug,
-        bodyHtml,
-        mediaId,
-        articleId: article.id,
-      },
-      signal,
-    );
-  });
+      return adapter.createDraft(
+        site,
+        {
+          title,
+          slug,
+          bodyHtml,
+          mediaId,
+          articleId: article.id,
+        },
+        signal,
+      );
+    },
+  );
 
   return { write: { sql: SQL.WRITE_POST, params: [article.id, postId] } };
 };

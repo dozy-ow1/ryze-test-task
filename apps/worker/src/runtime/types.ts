@@ -1,4 +1,4 @@
-import type { Completion, Database, Logger, Operation, Site, Step } from '@ryze/core';
+import type { Completion, Database, Logger, Operation, Site, Step } from '@ryze/shared';
 import type { LimitFunction } from 'p-limit';
 
 export interface Article {

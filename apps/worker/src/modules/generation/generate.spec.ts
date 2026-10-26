@@ -1,7 +1,7 @@
-import { classify, createLogger, Deferred, HttpError, type ImageProvider, llmCost, type Operation, SQL } from '@ryze/core';
+import { classify, createLogger, Deferred, HttpError, type ImageProvider, llmCost, type Operation, SQL } from '@ryze/shared';
 import sharp from 'sharp';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { type TestDb, testDb } from '../../../../../packages/core/testing/database.js';
+import { type TestDb, testDb } from '../../../../../packages/shared/src/testing/database.js';
 import type { Clients } from '../../infrastructure/clients.js';
 import { coverKey, type Store } from '../../infrastructure/store.js';
 import type { StepContext } from '../../runtime/types.js';
@@ -22,7 +22,10 @@ beforeAll(async () => {
     .toBuffer();
 });
 afterAll(() => t.drop());
-beforeEach(() => t.db.query('DELETE FROM quotas'));
+beforeEach(async () => {
+  await t.db.query('DELETE FROM quotas');
+  await t.db.query(SQL.SEED);
+});
 
 function memoryStore(): Store & { objects: Map<string, Buffer> } {
   const objects = new Map<string, Buffer>();
@@ -50,6 +53,7 @@ function ctx(clients: Partial<Clients>, op: Partial<Operation> = {}): StepContex
       attempts: 0,
       lease_version: 1,
       provider_ref: null,
+      created_at: new Date(),
       ...op,
     },
     article: {
@@ -135,6 +139,7 @@ describe('text', () => {
   });
 
   it('waits for the provider:llm bucket instead of calling', async () => {
+    await t.db.query("DELETE FROM quotas WHERE scope = 'provider:llm'");
     await t.db.query(SQL.SITE_QUOTA, ['provider:llm', 4000, 1]);
     const generate = vi.fn(async () => ({
       title: 't',
@@ -172,7 +177,7 @@ describe('image_fetch', () => {
     expect(image.poll).not.toHaveBeenCalled();
   });
 
-  it('polls the job it was given, then stores a 1200x630 JPEG under the article key', async () => {
+  it('defers a pending job, then stores its completed 1200x630 JPEG without resubmitting', async () => {
     const store = memoryStore();
     const states = ['pending', 'done'] as const;
 
@@ -182,14 +187,54 @@ describe('image_fetch', () => {
       return status === 'done' ? { status, url: 'http://img/job-1/file' } : { status };
     });
 
-    const out = await imageFetch(
-      ctx({ store, image: { kind: 'async', poll } }, { provider_ref: 'job-1' }),
-    );
+    const context = ctx({ store, image: { kind: 'async', poll } }, { provider_ref: 'job-1' });
+    await expect(imageFetch(context)).rejects.toBeInstanceOf(Deferred);
+    const out = await imageFetch(context);
     expect(poll).toHaveBeenCalledTimes(2);
     expect(poll).toHaveBeenCalledWith('job-1', expect.any(AbortSignal));
     const meta = await sharp(store.objects.get(coverKey(ARTICLE_ID))).metadata();
     expect(meta).toMatchObject({ format: 'jpeg', width: 1200, height: 630 });
     expect(out.usage).toEqual({ images: 1, model: 'mock', cost_usd: 0.04 });
+  });
+
+  it('keeps the original polling deadline across queue attempts', async () => {
+    const poll = vi.fn(async () => ({ status: 'pending' as const }));
+
+    const context = ctx(
+      { image: { kind: 'async', poll } },
+      { provider_ref: 'job-1', created_at: new Date(Date.now() - 121_000) },
+    );
+
+    const error = await imageFetch(context).catch((err) => err);
+    expect(classify(error)).toBe('permanent');
+    expect(error.message).toContain('did not finish');
+    expect(poll).toHaveBeenCalledTimes(1);
+  });
+
+  it('accepts a completed image even after queue delays and rejects a missing result URL', async () => {
+    const store = memoryStore();
+
+    const context = ctx(
+      {
+        store,
+        image: {
+          kind: 'async',
+
+          poll: async () => ({ status: 'done', url: 'https://images.example/cover' }),
+        },
+      },
+      { provider_ref: 'job', created_at: new Date(Date.now() - 180_000) },
+    );
+    await imageFetch(context);
+    expect(store.objects.has(coverKey(ARTICLE_ID))).toBe(true);
+    const invalid = ctx(
+      { image: { kind: 'async', poll: async () => ({ status: 'done' }) } },
+      { provider_ref: 'job' },
+    );
+
+    const error = await imageFetch(invalid).catch((err) => err);
+    expect(classify(error)).toBe('permanent');
+    expect(error.message).toContain('no download URL');
   });
 
   it('treats a job the provider does not know as permanent', async () => {

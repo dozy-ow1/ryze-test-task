@@ -1,8 +1,8 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { STEPS, type Step } from '@ryze/core';
+import { STEPS, type Step } from '@ryze/shared';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../../packages/core/testing/database.js';
-import { createRunner, seed as seedArticles } from '../../testing/runtime.js';
+import { type TestDb, testDb } from '../../../../packages/shared/src/testing/database.js';
+import { createRunner, seed as seedArticles } from '../testing/runtime.js';
 import { runPool } from './pool.js';
 import type { StepFn } from './types.js';
 import type { PoolName } from './workflow.js';

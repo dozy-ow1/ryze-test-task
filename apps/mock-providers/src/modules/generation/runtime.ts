@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { setTimeout as sleep } from 'node:timers/promises';
-import { FAULT_KINDS, type FaultKind, IMAGE_PRICE_USD, llmCost } from '@ryze/core';
+import { FAULT_KINDS, type FaultKind, IMAGE_PRICE_USD, llmCost } from '@ryze/shared';
 import type { FastifyReply, FastifyRequest } from 'fastify';
 import { writeArticle } from './content.js';
 

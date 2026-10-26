@@ -10,17 +10,19 @@ process.env.TEST_DATABASE_URL ??= `postgres://ryze:ryze@localhost:${env.POSTGRES
 
 export default defineConfig({
   resolve: {
-    alias: {
-      '@ryze/core': fileURLToPath(new URL('./packages/core/src/index.ts', import.meta.url)),
-    },
+    alias: [
+      {
+        find: /^@ryze\/shared$/,
+        replacement: fileURLToPath(new URL('./packages/shared/src/index.ts', import.meta.url)),
+      },
+      {
+        find: /^@ryze\/shared\/(.+)$/,
+        replacement: `${fileURLToPath(new URL('./packages/shared/src/', import.meta.url))}$1`,
+      },
+    ],
   },
   test: {
-    include: [
-      'apps/*/src/**/*.spec.ts',
-      'packages/*/src/**/*.spec.ts',
-      'packages/*/testing/**/*.spec.ts',
-      'tools/**/*.spec.ts',
-    ],
+    include: ['apps/*/src/**/*.spec.ts', 'packages/*/src/**/*.spec.ts', 'tools/**/*.spec.ts'],
     testTimeout: 20_000,
     hookTimeout: 30_000,
   },

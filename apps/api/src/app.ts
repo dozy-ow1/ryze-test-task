@@ -1,4 +1,4 @@
-import type { Database } from '@ryze/core';
+import type { Database } from '@ryze/shared/database/client';
 import Fastify, { type FastifyInstance, LogController } from 'fastify';
 import { articleRoutes } from './modules/articles/routes.js';
 import { healthRoutes } from './modules/health/routes.js';
@@ -20,6 +20,8 @@ export function buildApp(opts: { db: Database; siteTokenKey: string; logLevel?: 
     }
 
     if (isDbUnavailable(err)) {
+      req.log.warn({ err, request_id: req.id }, 'database unavailable');
+
       return reply.code(503).send({ error: 'database unavailable' });
     }
 

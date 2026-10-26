@@ -1,6 +1,6 @@
-import { createHttp, createShopify, HttpError, type Site } from '@ryze/core';
+import { createHttp, createShopify, HttpError, type Site } from '@ryze/shared';
 import { afterEach, describe, expect, it } from 'vitest';
-import { closeApps, inspect, listen, makeApp, mockCredentials, registerSite } from '../testing/helpers.js';
+import { closeApps, inspect, listen, makeApp, mockCredentials, registerSite } from './testing/helpers.js';
 
 afterEach(closeApps);
 

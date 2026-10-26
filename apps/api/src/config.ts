@@ -1,4 +1,4 @@
-import { logLevelSchema, positiveInt, siteTokenKeySchema } from '@ryze/core';
+import { logLevelSchema, positiveInt, siteTokenKeySchema } from '@ryze/shared/utils/config';
 import { z } from 'zod';
 
 export const apiConfig = z.object({

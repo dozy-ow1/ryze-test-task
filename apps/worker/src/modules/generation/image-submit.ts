@@ -1,4 +1,4 @@
-import { Permanent, withQuota } from '@ryze/core';
+import { Permanent, withQuota } from '@ryze/shared';
 import type { Clients } from '../../infrastructure/clients.js';
 import type { StepFn } from '../../runtime/types.js';
 

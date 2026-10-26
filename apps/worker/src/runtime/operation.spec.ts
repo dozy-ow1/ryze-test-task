@@ -1,12 +1,13 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claim, Deferred, encryptToken, HttpError, type Operation, Permanent, SQL, type Step } from '@ryze/core';
+import { claim, Deferred, encryptToken, HttpError, type Operation, Permanent, SQL, type Step } from '@ryze/shared';
 import pLimit from 'p-limit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../../packages/core/testing/database.js';
-import { claimed as claimStep, createRunner, KEY, state as operationState } from '../../testing/runtime.js';
+import { type TestDb, testDb } from '../../../../packages/shared/src/testing/database.js';
 import type { Clients } from '../infrastructure/clients.js';
+import { imageFetch } from '../modules/generation/image-fetch.js';
 import { verify } from '../modules/generation/verify.js';
 import { upload } from '../modules/publishing/upload.js';
+import { claimed as claimStep, createRunner, KEY, state as operationState } from '../testing/runtime.js';
 import { backoff, runOperation } from './operation.js';
 import type { Runner, StepFn } from './types.js';
 
@@ -59,6 +60,30 @@ describe('runOperation', () => {
     expect(await runOperation(r, op)).toBe('succeeded');
     const { rows } = await t.db.query('SELECT verified_at FROM sites');
     expect(rows[0].verified_at).toBeNull();
+  });
+
+  it('returns a pending image to the queue and releases its concurrency slot', async () => {
+    const op = await claimed('image_fetch');
+    await t.db.query('UPDATE operations SET provider_ref = $2 WHERE id = $1', [
+      op.id,
+      'pending-image',
+    ]);
+    op.provider_ref = 'pending-image';
+    const limit = pLimit(1);
+
+    const r: Runner<Clients> = {
+      ...runner(),
+      steps: { ...runner().steps, image_fetch: imageFetch },
+      clients: {
+        store: { exists: async () => false },
+        image: { kind: 'async', poll: async () => ({ status: 'pending' }) },
+      } as unknown as Clients,
+      imageLimit: limit,
+    };
+    expect(await runOperation(r, op)).toBe('deferred');
+    expect(await state(op)).toMatchObject({ status: 'pending', attempts: 0 });
+    expect(limit.activeCount).toBe(0);
+    expect(await limit(async () => 'next image can start')).toBe('next image can start');
   });
 
   it('retries a transient failure after the backoff', async () => {
@@ -203,7 +228,6 @@ describe('runOperation', () => {
               },
             },
           } as unknown as Clients;
-          await t.db.query(SQL.SITE_QUOTA, [`site:${ctx.site.id}`, 10, 2]);
 
           return upload({ ...ctx, clients });
         },

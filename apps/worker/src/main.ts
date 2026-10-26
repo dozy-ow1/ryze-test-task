@@ -1,5 +1,5 @@
 import { parseArgs } from 'node:util';
-import { createLogger, createPool, loadConfig } from '@ryze/core';
+import { createLogger, createPool, loadConfig } from '@ryze/shared';
 import pLimit from 'p-limit';
 import { workerConfig } from './config.js';
 import { createClients } from './infrastructure/clients.js';

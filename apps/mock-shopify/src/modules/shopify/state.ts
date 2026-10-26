@@ -1,4 +1,4 @@
-import { type FaultKind, shopifyCredentials } from '@ryze/core';
+import { type FaultKind, shopifyCredentials } from '@ryze/shared';
 
 export interface Faults {
   rate: number;

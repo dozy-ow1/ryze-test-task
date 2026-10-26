@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { claim, type Operation } from '@ryze/core';
+import { claim, type Operation } from '@ryze/shared';
 import { describe, runOperation } from './operation.js';
 import type { Runner } from './types.js';
 import { POOLS, type PoolName } from './workflow.js';

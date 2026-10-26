@@ -12,7 +12,7 @@
     "lint": "biome lint . && tsx tools/formatting/style.ts",
     "format": "biome check --write --formatter-enabled=false . && tsx tools/formatting/style.ts --write",
     "test": "vitest run",
-    "migrate": "tsx packages/core/src/database/migrate.ts",
+    "migrate": "tsx packages/shared/src/database/migrate.ts",
     "seed": "tsx tools/development/seed.ts",
     "demo": "tsx tools/development/demo.ts",
     "smoke": "tsx tools/development/smoke.ts",
@@ -20,7 +20,7 @@
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",
-    "@ryze/core": "workspace:*",
+    "@ryze/shared": "workspace:*",
     "@types/node": "22.20.5",
     "tsx": "4.23.15",
     "typescript": "5.9.3",

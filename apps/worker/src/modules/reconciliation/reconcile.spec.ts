@@ -1,8 +1,8 @@
-import { createHttp, createLogger, createShopify, encryptToken } from '@ryze/core';
+import { createHttp, createLogger, createShopify, encryptToken, SQL } from '@ryze/shared';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../../../packages/core/testing/database.js';
+import { type TestDb, testDb } from '../../../../../packages/shared/src/testing/database.js';
 import { buildApp } from '../../../../mock-shopify/src/app.js';
-import { mockCredentials, registerSite } from '../../../../mock-shopify/testing/helpers.js';
+import { mockCredentials, registerSite } from '../../../../mock-shopify/src/testing/helpers.js';
 import type { Clients } from '../../infrastructure/clients.js';
 import { reconcile } from './reconcile.js';
 
@@ -41,6 +41,7 @@ describe('reconciler', () => {
         ['https://test-store.myshopify.com', encryptToken(token, KEY)],
       );
       siteIds.push(rows[0].id);
+      await t.db.query(SQL.SITE_QUOTA, [`site:${rows[0].id}`, 100, 100]);
     }
 
     const site = {

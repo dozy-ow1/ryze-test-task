@@ -1,4 +1,4 @@
-import { FAULT_KINDS, type FaultKind } from '@ryze/core';
+import { FAULT_KINDS, type FaultKind } from '@ryze/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import type { GenerationRuntime } from '../generation/runtime.js';
 

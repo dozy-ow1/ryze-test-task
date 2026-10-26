@@ -1,4 +1,4 @@
-import { loadConfig, mockConfig } from '@ryze/core';
+import { loadConfig, mockConfig } from '@ryze/shared';
 import { buildApp } from './app.js';
 
 const config = loadConfig(mockConfig, { PORT: '8091', ...process.env });

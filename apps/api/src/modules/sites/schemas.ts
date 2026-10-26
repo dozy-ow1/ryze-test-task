@@ -1,4 +1,4 @@
-import { isShopifyUrl, shopifyCredentials } from '@ryze/core';
+import { isShopifyUrl, shopifyCredentials } from '@ryze/shared/platforms/shopify/config';
 import { z } from 'zod';
 
 const token = z

@@ -1,4 +1,4 @@
-import { FAULT_KINDS, shopifyCredentials } from '@ryze/core';
+import { FAULT_KINDS, shopifyCredentials } from '@ryze/shared';
 import type { FastifyPluginAsync } from 'fastify';
 import { type Faults, newSite, type Site } from '../shopify/state.js';
 import type { TransportOptions } from '../shopify/transport.js';

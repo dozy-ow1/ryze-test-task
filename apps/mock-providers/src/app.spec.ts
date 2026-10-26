@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { FAULT_KINDS, IMAGE_PRICE_USD, llmCost } from '@ryze/core';
+import { FAULT_KINDS, IMAGE_PRICE_USD, llmCost } from '@ryze/shared';
 import type { FastifyInstance } from 'fastify';
 import sharp from 'sharp';
 import { afterEach, describe, expect, it } from 'vitest';

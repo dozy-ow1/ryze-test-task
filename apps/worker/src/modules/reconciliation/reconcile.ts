@@ -1,4 +1,4 @@
-import { type Database, decryptToken, getJson, type Logger, withQuota } from '@ryze/core';
+import { type Database, decryptToken, getJson, type Logger, withQuota } from '@ryze/shared';
 import type { Clients } from '../../infrastructure/clients.js';
 
 interface InspectedSite {
@@ -8,7 +8,7 @@ interface InspectedSite {
 
 export interface Reconcile {
   db: Database;
-  clients: Clients;
+  clients: Pick<Clients, 'http' | 'platform'>;
   log: Logger;
   siteTokenKey: string;
   mockShopifyUrl?: string; // in production: each platform's list endpoint, by our article-id field

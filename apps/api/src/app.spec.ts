@@ -1,6 +1,8 @@
-import { createPool, decryptToken, SQL } from '@ryze/core';
+import { createPool } from '@ryze/shared/database/client';
+import { SQL } from '@ryze/shared/database/queries';
+import { decryptToken } from '@ryze/shared/utils/secrets';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { type TestDb, testDb } from '../../../packages/core/testing/database.js';
+import { type TestDb, testDb } from '../../../packages/shared/src/testing/database.js';
 import { buildApp } from './app.js';
 import { isDbUnavailable } from './utils/errors.js';
 
@@ -107,6 +109,21 @@ describe('POST /sites', () => {
 });
 
 describe('POST /articles', () => {
+  it('rejects empty or oversized paid briefs before enqueueing work', async () => {
+    const siteId = await site();
+
+    for (const brief of ['   ', 'x'.repeat(10_001)]) {
+      const response = await app.inject({
+        method: 'POST',
+        url: '/articles',
+        payload: { site_id: siteId, brief, idempotency_key: 'invalid-brief' },
+      });
+      expect(response.statusCode).toBe(400);
+    }
+
+    expect(await count('articles WHERE site_id = $1', [siteId])).toBe(0);
+  });
+
   it('is idempotent on (site_id, idempotency_key)', async () => {
     const siteId = await site();
 

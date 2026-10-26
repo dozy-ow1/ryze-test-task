@@ -1,10 +1,28 @@
-import { logLevelSchema, siteTokenKeySchema } from '@ryze/core';
+import { logLevelSchema, siteTokenKeySchema } from '@ryze/shared';
 import { z } from 'zod';
 
-export const workerConfig = z
+export const reconcileConfig = z
   .object({
     DATABASE_URL: z.url(),
     SITE_TOKEN_KEY: siteTokenKeySchema,
+    SHOPIFY_MODE: z.enum(['live', 'mock']).default('live'),
+    MOCK_SHOPIFY_URL: z.url().optional(),
+    LOG_LEVEL: logLevelSchema,
+  })
+  .superRefine((config, ctx) => {
+    if (config.SHOPIFY_MODE === 'mock' && !config.MOCK_SHOPIFY_URL) {
+      ctx.addIssue({
+        code: 'custom',
+        path: ['MOCK_SHOPIFY_URL'],
+        message: 'required when SHOPIFY_MODE=mock',
+      });
+    }
+  });
+
+export type ReconcileConfig = z.output<typeof reconcileConfig>;
+
+export const workerConfig = reconcileConfig
+  .safeExtend({
     S3_ENDPOINT: z.url(),
     S3_BUCKET: z.string().min(1),
     S3_ACCESS_KEY: z.string().min(1),
@@ -17,9 +35,6 @@ export const workerConfig = z
     ANTHROPIC_MODEL: z.string().default('claude-sonnet-5-5'),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_IMAGE_MODEL: z.string().default('gpt-image-1'),
-    SHOPIFY_MODE: z.enum(['live', 'mock']).default('live'),
-    MOCK_SHOPIFY_URL: z.url().optional(),
-    LOG_LEVEL: logLevelSchema,
   })
   .superRefine((c, ctx) => {
     const need = (key: keyof typeof c, when: string) => {
@@ -27,10 +42,6 @@ export const workerConfig = z
         ctx.addIssue({ code: 'custom', path: [key], message: `required when ${when}` });
       }
     };
-
-    if (c.SHOPIFY_MODE === 'mock') {
-      need('MOCK_SHOPIFY_URL', 'SHOPIFY_MODE=mock');
-    }
 
     if (c.LLM_PROVIDER === 'mock') {
       need('LLM_BASE_URL', 'LLM_PROVIDER=mock');

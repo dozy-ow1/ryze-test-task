@@ -1,5 +1,5 @@
 import { randomBytes } from 'node:crypto';
-import { FAULT_KINDS } from '@ryze/core';
+import { FAULT_KINDS } from '@ryze/shared';
 import { API, call, SHOPIFY } from './client.js';
 
 export const ALL_FAULTS = [...FAULT_KINDS];

@@ -1,4 +1,4 @@
-import type { Step } from '@ryze/core';
+import type { Step } from '@ryze/shared';
 
 export const POOLS = {
   generate: ['verify', 'text', 'image_submit', 'image_fetch'],

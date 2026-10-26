@@ -1,4 +1,5 @@
-import { createPool, loadConfig } from '@ryze/core';
+import { createPool } from '@ryze/shared/database/client';
+import { loadConfig } from '@ryze/shared/utils/config';
 import { buildApp } from './app.js';
 import { apiConfig } from './config.js';
 

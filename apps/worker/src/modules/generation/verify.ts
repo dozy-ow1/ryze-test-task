@@ -1,6 +1,7 @@
-import { SQL, withQuota } from '@ryze/core';
+import { SQL, withQuota } from '@ryze/shared';
 import type { Clients } from '../../infrastructure/clients.js';
 import type { StepFn } from '../../runtime/types.js';
+import { SITE_REQUEST_UNITS } from '../../settings.js';
 
 const FRESH_MS = 10 * 60_000;
 
@@ -11,7 +12,7 @@ export const verify: StepFn<Clients> = async ({ site, clients, signal }) => {
   }
 
   const adapter = clients.platform;
-  await withQuota(clients.db, `site:${site.id}`, 1, () => {
+  await withQuota(clients.db, `site:${site.id}`, SITE_REQUEST_UNITS.verify, () => {
     signal.throwIfAborted();
 
     return adapter.verify(site, signal);

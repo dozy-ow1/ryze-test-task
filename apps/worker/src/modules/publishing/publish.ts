@@ -1,10 +1,9 @@
-import { Permanent, SQL, withQuota } from '@ryze/core';
+import { Permanent, SQL, withQuota } from '@ryze/shared';
 import type { Clients } from '../../infrastructure/clients.js';
 import type { StepFn } from '../../runtime/types.js';
+import { SITE_REQUEST_UNITS } from '../../settings.js';
 
-// A post that is already live (an earlier attempt published it, or the draft was adopted live)
-// is only read: its URL is recorded and the step finishes. One take of the site's bucket covers
-// the status read and the publish, like upload.
+// The Shopify adapter owns the status lookup and skips an already completed publication.
 export const publish: StepFn<Clients> = async ({ article, site, clients, signal }) => {
   const postId = article.remote_post_id;
 
@@ -14,18 +13,16 @@ export const publish: StepFn<Clients> = async ({ article, site, clients, signal 
 
   const adapter = clients.platform;
 
-  const url = await withQuota(clients.db, `site:${site.id}`, 2, async () => {
-    signal.throwIfAborted();
-    const now = await adapter.getStatus(site, postId, signal);
+  const url = await withQuota(
+    clients.db,
+    `site:${site.id}`,
+    SITE_REQUEST_UNITS.publish,
+    async () => {
+      signal.throwIfAborted();
 
-    if (now.status === 'live' && now.url) {
-      return now.url;
-    }
-
-    signal.throwIfAborted();
-
-    return adapter.publish(site, postId, signal);
-  });
+      return adapter.publish(site, postId, signal);
+    },
+  );
 
   return { write: { sql: SQL.WRITE_PUBLISHED, params: [article.id, url] } };
 };

@@ -1,9 +1,13 @@
 // Read-only setup check: validates credentials/scopes and lists blogs. Does not publish content.
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync } from 'node:fs';
 import { parseEnv } from 'node:util';
-import { createHttp, HttpError, normalizeShopifyShop, SHOPIFY_API_VERSION, SHOPIFY_SCOPES } from '@ryze/core';
+import { createHttp, HttpError, normalizeShopifyShop, SHOPIFY_API_VERSION, SHOPIFY_SCOPES } from '@ryze/shared';
 
-const env = { ...parseEnv(readFileSync('.env', 'utf8')), ...process.env };
+const env = {
+  ...(existsSync('.env') ? parseEnv(readFileSync('.env', 'utf8')) : {}),
+  ...process.env,
+};
+
 const shop = normalizeShopifyShop(env.SHOPIFY_SHOP ?? '');
 const clientId = env.SHOPIFY_CLIENT_ID;
 const clientSecret = env.SHOPIFY_CLIENT_SECRET;

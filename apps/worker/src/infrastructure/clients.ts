@@ -1,5 +1,5 @@
-import { createAnthropic, createHttp, createMockImage, createMockText, createOpenAI, createShopify, type Database, type Http, type ImageProvider, type PlatformAdapter, type TextProvider } from '@ryze/core';
-import type { WorkerConfig } from '../config.js';
+import { createAnthropic, createHttp, createMockImage, createMockText, createOpenAI, createShopify, type Database, type Http, type ImageProvider, type PlatformAdapter, type TextProvider } from '@ryze/shared';
+import type { ReconcileConfig, WorkerConfig } from '../config.js';
 import { GENERATION_TIMEOUT_MS, HTTP_TIMEOUT_MS } from '../settings.js';
 import { type Store, s3Store } from './store.js';
 
@@ -40,6 +40,23 @@ export function createClients(config: WorkerConfig, db: Database): Clients {
         })
       : createMockImage(http, config.IMAGE_BASE_URL as string);
 
+  return {
+    db,
+    http,
+    llm,
+    image,
+    store: s3Store(config),
+    platform: createPlatformClients(config, http).platform,
+  };
+}
+
+// Reconciliation needs only transport and platform credentials, not generation providers or S3.
+export function createPlatformClients(
+  config: ReconcileConfig,
+  http = createHttp(HTTP_TIMEOUT_MS, {
+    allowedHosts: config.SHOPIFY_MODE === 'mock' ? ['mock-shopify'] : [],
+  }),
+) {
   // Mock mode swaps only the Shopify transport; the adapter and its credentials stay identical.
   const shopifyHttp: Http =
     config.SHOPIFY_MODE === 'mock'
@@ -54,12 +71,5 @@ export function createClients(config: WorkerConfig, db: Database): Clients {
         }
       : http;
 
-  return {
-    db,
-    http,
-    llm,
-    image,
-    store: s3Store(config),
-    platform: createShopify(shopifyHttp),
-  };
+  return { http, platform: createShopify(shopifyHttp) };
 }

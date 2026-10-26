@@ -72,7 +72,10 @@ services:
       args:
         PKG: api
     image: ryze-api
-    env_file: .env
+    environment:
+      DATABASE_URL: ${DATABASE_URL}
+      SITE_TOKEN_KEY: ${SITE_TOKEN_KEY}
+      LOG_LEVEL: ${LOG_LEVEL:-info}
     ports:
       - "127.0.0.1:8080:8080"
     restart: unless-stopped
@@ -96,8 +99,6 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      mock-providers:
-        condition: service_healthy
 
   worker-publish:
     <<: *worker
@@ -110,8 +111,6 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      mock-shopify:
-        condition: service_healthy
 
   reconciler:
     <<: *worker
@@ -127,7 +126,6 @@ services:
       args:
         PKG: mock-providers
     image: ryze-mock-providers
-    env_file: .env
     environment:
       PORT: 8091
     ports:
@@ -145,7 +143,6 @@ services:
       args:
         PKG: mock-shopify
     image: ryze-mock-shopify
-    env_file: .env
     environment:
       PORT: 8092
     ports:

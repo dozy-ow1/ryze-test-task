@@ -1,4 +1,4 @@
-import { STEPS, type Step } from '@ryze/core';
+import { STEPS, type Step } from '@ryze/shared';
 import { describe, expect, it } from 'vitest';
 import { nextStep } from './workflow.js';
 

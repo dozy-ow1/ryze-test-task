@@ -1,5 +1,5 @@
 import { setTimeout as sleep } from 'node:timers/promises';
-import { FAULT_KINDS, type FaultKind, IMAGE_PRICE_USD, llmCost } from '@ryze/core';
+import { FAULT_KINDS, type FaultKind, IMAGE_PRICE_USD, llmCost } from '@ryze/shared';
 import type { FastifyInstance } from 'fastify';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { buildApp } from './app.js';
