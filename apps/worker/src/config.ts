@@ -17,7 +17,8 @@ export const workerConfig = z
     ANTHROPIC_MODEL: z.string().default('claude-sonnet-5-5'),
     OPENAI_API_KEY: z.string().optional(),
     OPENAI_IMAGE_MODEL: z.string().default('gpt-image-1'),
-    MOCK_WORDPRESS_URL: z.url().optional(),
+    SHOPIFY_MODE: z.enum(['live', 'mock']).default('live'),
+    MOCK_SHOPIFY_URL: z.url().optional(),
     LOG_LEVEL: logLevelSchema,
   })
   .superRefine((c, ctx) => {
@@ -26,6 +27,10 @@ export const workerConfig = z
         ctx.addIssue({ code: 'custom', path: [key], message: `required when ${when}` });
       }
     };
+
+    if (c.SHOPIFY_MODE === 'mock') {
+      need('MOCK_SHOPIFY_URL', 'SHOPIFY_MODE=mock');
+    }
 
     if (c.LLM_PROVIDER === 'mock') {
       need('LLM_BASE_URL', 'LLM_PROVIDER=mock');

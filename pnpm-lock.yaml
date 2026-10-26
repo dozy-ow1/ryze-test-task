@@ -51,7 +51,7 @@ importers:
         specifier: ~0.34.5
         version: 0.34.5
 
-  apps/mock-wordpress:
+  apps/mock-shopify:
     dependencies:
       '@ryze/core':
         specifier: workspace:*

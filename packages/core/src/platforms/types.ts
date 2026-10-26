@@ -1,7 +1,7 @@
 // A customer site as the adapters see it: the token is decrypted and must never be logged.
 export interface Site {
   id: string;
-  platform: 'wordpress';
+  platform: 'shopify';
   base_url: string;
   token: string;
 }

@@ -1,14 +1,14 @@
-import { FAULT_KINDS } from '@ryze/core';
+import { FAULT_KINDS, shopifyCredentials } from '@ryze/core';
 import type { FastifyPluginAsync } from 'fastify';
-import { type Faults, newSite, type Site } from '../wordpress/state.js';
-import type { TransportOptions } from '../wordpress/transport.js';
+import { type Faults, newSite, type Site } from '../shopify/state.js';
+import type { TransportOptions } from '../shopify/transport.js';
 
 const registerSiteBody = {
   type: 'object',
   required: ['token', 'platform'],
   properties: {
     token: { type: 'string', minLength: 1 },
-    platform: { const: 'wordpress' },
+    platform: { const: 'shopify' },
     faults: {
       type: 'object',
       properties: {
@@ -21,7 +21,7 @@ const registerSiteBody = {
 
 interface RegisterSite {
   token: string;
-  platform: 'wordpress';
+  platform: 'shopify';
   faults?: Partial<Faults>;
 }
 
@@ -32,6 +32,12 @@ export const adminRoutes: FastifyPluginAsync<{
   // Registering a known token again updates its faults and keeps its data.
   app.post('/sites', { schema: { body: registerSiteBody } }, async (request, reply) => {
     const { token, platform, faults } = request.body as RegisterSite;
+
+    try {
+      shopifyCredentials.parse(JSON.parse(token));
+    } catch {
+      return reply.code(400).send({ error: 'invalid Shopify credentials' });
+    }
 
     const effective: Faults = {
       rate: faults?.rate ?? defaults.faultRate,

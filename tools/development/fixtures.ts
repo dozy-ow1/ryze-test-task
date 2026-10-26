@@ -1,25 +1,30 @@
 import { randomBytes } from 'node:crypto';
 import { FAULT_KINDS } from '@ryze/core';
-import { API, call, PLATFORMS } from './client.js';
+import { API, call, SHOPIFY } from './client.js';
 
-const PLATFORMS_IN_COMPOSE = 'http://mock-wordpress:8092';
 export const ALL_FAULTS = [...FAULT_KINDS];
 
 export interface DemoSite {
   id: string;
   token: string;
-  platform: 'wordpress';
+  platform: 'shopify';
 }
 
 // Registers the token on the mock platform (with its faults), then the site through the API.
 export async function registerMockSite(
   faults: { rate: number; kinds: string[] },
-  endpoints = { api: API, platforms: PLATFORMS },
+  endpoints = { api: API, shopify: SHOPIFY },
 ): Promise<DemoSite> {
-  const platform = 'wordpress';
-  const token = `wordpress-${randomBytes(12).toString('hex')}`;
-  await call('POST', `${endpoints.platforms}/_admin/sites`, { token, platform, faults });
-  const base_url = `${PLATFORMS_IN_COMPOSE}/wordpress`;
+  const platform = 'shopify';
+  const clientId = `demo-${randomBytes(12).toString('hex')}`;
+
+  const token = JSON.stringify({
+    clientId,
+    clientSecret: 'mock-secret',
+    blogId: 'gid://shopify/Blog/1',
+  });
+  await call('POST', `${endpoints.shopify}/_admin/sites`, { token, platform, faults });
+  const base_url = `https://${clientId}.myshopify.com`;
 
   const site = await call<{ id: string }>('POST', `${endpoints.api}/sites`, {
     platform,

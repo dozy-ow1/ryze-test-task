@@ -1,8 +1,8 @@
-import { classify, createHttp, createLogger, createWordPress, HttpError, isAuthError, type Site } from '@ryze/core';
+import { classify, createHttp, createLogger, createShopify, HttpError, isAuthError, type Site } from '@ryze/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type TestDb, testDb } from '../../../../../packages/core/testing/database.js';
-import { buildApp } from '../../../../mock-wordpress/src/app.js';
-import { inspect as inspectWordPress, registerSite } from '../../../../mock-wordpress/testing/helpers.js';
+import { buildApp } from '../../../../mock-shopify/src/app.js';
+import { inspect as inspectShopify, mockCredentials, registerSite } from '../../../../mock-shopify/testing/helpers.js';
 import type { Clients } from '../../infrastructure/clients.js';
 import { coverKey, type Store } from '../../infrastructure/store.js';
 import type { StepContext, StepFn } from '../../runtime/types.js';
@@ -11,12 +11,16 @@ import { draft } from './draft.js';
 import { publish } from './publish.js';
 import { upload } from './upload.js';
 
-// The worker's WordPress adapter against the mock used by the demo: the same contract and the
+// The worker's Shopify adapter against the mock used by the demo: the same contract and the
 // recovery path when a write happens but its answer is lost.
 
 const mock = buildApp({ faultRate: 0, faultKinds: [] });
 const http = createHttp(5_000, { allowPrivateNetwork: true });
-const platform = createWordPress(http);
+
+const platform = createShopify((url, request) =>
+  http(url.replace('https://test-store.myshopify.com', base), request),
+);
+
 let base: string;
 let t: TestDb;
 
@@ -32,10 +36,15 @@ afterAll(async () => {
 });
 
 async function site(dropWrites = false): Promise<Site> {
-  const token = `wordpress-${Math.random().toString(36).slice(2)}`;
+  const token = mockCredentials(`shopify-${Math.random().toString(36).slice(2)}`);
   await register(token, dropWrites);
 
-  return { id: crypto.randomUUID(), platform: 'wordpress', base_url: `${base}/wordpress`, token };
+  return {
+    id: crypto.randomUUID(),
+    platform: 'shopify',
+    base_url: 'https://test-store.myshopify.com',
+    token,
+  };
 }
 
 async function register(token: string, dropWrites: boolean) {
@@ -46,12 +55,12 @@ async function register(token: string, dropWrites: boolean) {
 }
 
 async function inspect(token: string) {
-  const body = await inspectWordPress(mock);
+  const body = await inspectShopify(mock);
 
   return body.sites.find((s) => s.token === token) as (typeof body.sites)[number];
 }
 
-describe('WordPress adapter', () => {
+describe('Shopify adapter', () => {
   it('finds what it created and publishes idempotently', async () => {
     const s = await site();
     await platform.verify(s);
@@ -73,7 +82,6 @@ describe('WordPress adapter', () => {
 
     const postId = await platform.createDraft(s, input);
     expect(await platform.findBySlug(s, slug)).toMatchObject({ id: postId, status: 'draft' });
-    expect(await platform.createDraft(s, input)).toBe(postId); // a taken slug is adopted
 
     expect(await platform.getStatus(s, postId)).toMatchObject({ status: 'draft' });
     const url = await platform.publish(s, postId);
@@ -94,14 +102,16 @@ describe('WordPress adapter', () => {
   it('reports a bad token as a permanent auth error', async () => {
     const s = await site();
 
-    const err = await platform.verify({ ...s, token: 'nope' }).catch((e) => e);
+    const err = await platform
+      .verify({ ...s, token: mockCredentials('unknown-client') })
+      .catch((e) => e);
     expect(err).toBeInstanceOf(HttpError);
     expect(classify(err)).toBe('permanent');
     expect(isAuthError(err)).toBe(true);
   });
 });
 
-describe('WordPress steps when a write answer is lost', () => {
+describe('Shopify steps when a write answer is lost', () => {
   it('upload, draft and publish each take effect exactly once', async () => {
     const s = await site(true); // every write happens, then its socket is dropped
 

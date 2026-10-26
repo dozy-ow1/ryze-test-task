@@ -1,15 +1,19 @@
-import { createHttp, createLogger, createWordPress, encryptToken } from '@ryze/core';
+import { createHttp, createLogger, createShopify, encryptToken } from '@ryze/core';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { type TestDb, testDb } from '../../../../../packages/core/testing/database.js';
-import { buildApp } from '../../../../mock-wordpress/src/app.js';
-import { registerSite } from '../../../../mock-wordpress/testing/helpers.js';
+import { buildApp } from '../../../../mock-shopify/src/app.js';
+import { mockCredentials, registerSite } from '../../../../mock-shopify/testing/helpers.js';
 import type { Clients } from '../../infrastructure/clients.js';
 import { reconcile } from './reconcile.js';
 
 const KEY = Buffer.alloc(32, 3).toString('base64');
 const mock = buildApp({ faultRate: 0, faultKinds: [] });
 const http = createHttp(5_000, { allowPrivateNetwork: true });
-const wp = createWordPress(http);
+
+const shopify = createShopify((url, request) =>
+  http(url.replace('https://test-store.myshopify.com', base), request),
+);
+
 let base: string;
 let t: TestDb;
 
@@ -26,27 +30,27 @@ afterAll(async () => {
 
 describe('reconciler', () => {
   it('deletes only drafts that duplicate a post their article recorded', async () => {
-    const token = 'wordpress-reconcile';
+    const token = mockCredentials('shopify-reconcile');
     await registerSite(mock, token);
     // The same blog registered twice: two site rows, one account.
     const siteIds: string[] = [];
 
     for (let i = 0; i < 2; i++) {
       const { rows } = await t.db.query(
-        `INSERT INTO sites (platform, base_url, token_enc) VALUES ('wordpress', $1, $2) RETURNING id`,
-        [`${base}/wordpress`, encryptToken(token, KEY)],
+        `INSERT INTO sites (platform, base_url, token_enc) VALUES ('shopify', $1, $2) RETURNING id`,
+        ['https://test-store.myshopify.com', encryptToken(token, KEY)],
       );
       siteIds.push(rows[0].id);
     }
 
     const site = {
       id: siteIds[0],
-      platform: 'wordpress' as const,
-      base_url: `${base}/wordpress`,
+      platform: 'shopify' as const,
+      base_url: 'https://test-store.myshopify.com',
       token,
     };
 
-    const media = await wp.uploadMedia(site, 'ryze-cover.jpg', Buffer.from('x'));
+    const media = await shopify.uploadMedia(site, 'ryze-cover.jpg', Buffer.from('x'));
 
     const article = async (siteId: string, key: string) =>
       (
@@ -57,7 +61,7 @@ describe('reconciler', () => {
       ).rows[0].id as string;
 
     const draft = (articleId: string, slug: string) =>
-      wp.createDraft(site, {
+      shopify.createDraft(site, {
         title: slug,
         slug,
         bodyHtml: '<p>x</p>',
@@ -85,10 +89,10 @@ describe('reconciler', () => {
 
     const report = await reconcile({
       db: t.db,
-      clients: { http, platform: wp } as unknown as Clients,
+      clients: { http, platform: shopify } as unknown as Clients,
       log: createLogger('test', 'silent'),
       siteTokenKey: KEY,
-      mockWordPressUrl: base,
+      mockShopifyUrl: base,
     });
     expect(report.strays).toEqual({ found: 1, deleted: 1 });
     const inspect = (await (await fetch(`${base}/_admin/inspect`)).json()) as {

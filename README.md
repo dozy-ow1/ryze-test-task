@@ -1,6 +1,6 @@
 # Ryze publishing pipeline
 
-Generate an article and cover image, then publish them to WordPress.
+Generate an article and cover image, then publish them to Shopify.
 Postgres is the queue and progress ledger; background workers generate and publish content.
 
 ## Run
@@ -21,12 +21,13 @@ For persistent local development:
 
 ```sh
 cp .env.example .env                 # first setup only
+# Set SHOPIFY_MODE=mock for pnpm seed; keep it live for your real store.
 # Set POSTGRES_PORT=5433 in .env if 5432 is occupied.
 docker compose up -d --build --wait
 pnpm seed
 ```
 
-Ports bind to localhost: API **8080**, mock providers **8091**, mock WordPress **8092**, MinIO **9000**.
+Ports bind to localhost: API **8080**, mock providers **8091**, mock Shopify **8092**, MinIO **9000**.
 
 ## Layout
 
@@ -35,7 +36,7 @@ Ports bind to localhost: API **8080**, mock providers **8091**, mock WordPress *
 | `apps/api` | HTTP intake; each feature owns its routes, handlers and schemas |
 | `apps/worker` | Background service: pipeline modules, runtime lifecycle and external clients |
 | `apps/mock-providers` | Text/image API simulation for local development |
-| `apps/mock-wordpress` | WordPress API simulation with fault injection |
+| `apps/mock-shopify` | Shopify API simulation with fault injection |
 | `packages/core` | Shared database, provider, platform and utility code |
 | `packages/core/migrations` | Ordered, checksummed SQL migrations |
 | `tools/development` | Demo, seed data and real-account smoke commands |
@@ -74,10 +75,27 @@ Read progress at `GET /articles/:id` or `/articles/summary`. Repeated keys retur
 
 The API has no authentication: keep it local or put access control in front of it. A crash or lost
 response can repeat paid generation. Platform lookups and lease fencing reduce duplicate writes;
-they do not provide unconditional exactly-once delivery. Real-account integrations have offline
-coverage; live accounts and real-platform stray enumeration have not been validated.
+they do not provide unconditional exactly-once delivery. Basic Shopify publication has been exercised against a real store. Stray-draft enumeration
+currently runs only against the mock; production load capacity has not been validated.
 
 Applied migrations are immutable. For an older unversioned database, back up and review its schema
 against [`001-initial.sql`](packages/core/migrations/001-initial.sql), then run `pnpm migrate --baseline`
 with `DATABASE_URL` pointing at that database. Before rebuilding an older local stack, use
 `docker compose down --remove-orphans` to stop renamed services while keeping their volumes.
+
+## Shopify
+
+Install an app on your store with `write_content`, `read_files` and `write_files`.
+For the supported client credentials flow, the app and store must belong to the same Shopify
+organization. Keep the storefront password enabled while testing; Admin API access is separate.
+Set `SHOPIFY_SHOP` (the `store.myshopify.com` hostname), `SHOPIFY_CLIENT_ID` and
+`SHOPIFY_CLIENT_SECRET` in `.env`, then run `pnpm shopify:check`. It only checks access and lists
+blogs. Set `SHOPIFY_BLOG_ID` to the chosen `gid://shopify/Blog/...` value.
+
+`pnpm smoke` **publishes one article** to the configured Shopify blog; it supports mock
+images with real text. The generated cover is uploaded directly to Shopify, so S3 need not be public.
+API registration uses `platform: "shopify"`, `base_url: "https://store.myshopify.com"` and a `token`
+string containing JSON `{clientId, clientSecret, blogId}`; credentials are encrypted at rest.
+Tokens renew automatically. The adapter uses Admin GraphQL API `2026-07` and checks remote article
+ownership before adopting retries. `SHOPIFY_MODE=mock` redirects the same adapter to `mock-shopify`
+for local seed/demo runs; the default `live` mode uses the real store.

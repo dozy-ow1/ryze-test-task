@@ -1,4 +1,4 @@
-import { createAnthropic, createHttp, createMockImage, createMockText, createOpenAI, createWordPress, type Database, type Http, type ImageProvider, type PlatformAdapter, type TextProvider } from '@ryze/core';
+import { createAnthropic, createHttp, createMockImage, createMockText, createOpenAI, createShopify, type Database, type Http, type ImageProvider, type PlatformAdapter, type TextProvider } from '@ryze/core';
 import type { WorkerConfig } from '../config.js';
 import { GENERATION_TIMEOUT_MS, HTTP_TIMEOUT_MS } from '../settings.js';
 import { type Store, s3Store } from './store.js';
@@ -15,7 +15,12 @@ export interface Clients {
 
 export function createClients(config: WorkerConfig, db: Database): Clients {
   const http = createHttp(HTTP_TIMEOUT_MS, {
-    allowedHosts: ['mock-providers', 'mock-wordpress'],
+    allowedHosts: [
+      ...(config.LLM_PROVIDER === 'mock' || config.IMAGE_PROVIDER === 'mock'
+        ? ['mock-providers']
+        : []),
+      ...(config.SHOPIFY_MODE === 'mock' ? ['mock-shopify'] : []),
+    ],
   });
 
   const llm =
@@ -35,12 +40,26 @@ export function createClients(config: WorkerConfig, db: Database): Clients {
         })
       : createMockImage(http, config.IMAGE_BASE_URL as string);
 
+  // Mock mode swaps only the Shopify transport; the adapter and its credentials stay identical.
+  const shopifyHttp: Http =
+    config.SHOPIFY_MODE === 'mock'
+      ? (url, request) => {
+          const parsed = new URL(url);
+
+          const destination = parsed.hostname.endsWith('.myshopify.com')
+            ? `${config.MOCK_SHOPIFY_URL}${parsed.pathname}${parsed.search}`
+            : url;
+
+          return http(destination, request);
+        }
+      : http;
+
   return {
     db,
     http,
     llm,
     image,
     store: s3Store(config),
-    platform: createWordPress(http),
+    platform: createShopify(shopifyHttp),
   };
 }

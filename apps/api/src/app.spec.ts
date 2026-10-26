@@ -4,6 +4,12 @@ import { type TestDb, testDb } from '../../../packages/core/testing/database.js'
 import { buildApp } from './app.js';
 import { isDbUnavailable } from './utils/errors.js';
 
+const TOKEN = JSON.stringify({
+  clientId: 'client',
+  clientSecret: 'tok-secret',
+  blogId: 'gid://shopify/Blog/1',
+});
+
 const KEY = Buffer.alloc(32, 7).toString('base64');
 let t: TestDb;
 let app: ReturnType<typeof buildApp>;
@@ -22,9 +28,9 @@ async function site(): Promise<string> {
     method: 'POST',
     url: '/sites',
     payload: {
-      platform: 'wordpress',
-      base_url: 'http://mock-wordpress:8092/wordpress',
-      token: 'tok-secret',
+      platform: 'shopify',
+      base_url: 'https://test-store.myshopify.com',
+      token: TOKEN,
     },
   });
   expect(res.statusCode).toBe(201);
@@ -36,25 +42,64 @@ const count = async (sql: string, params: unknown[] = []) =>
   (await t.db.query<{ n: number }>(`SELECT count(*) AS n FROM ${sql}`, params)).rows[0].n;
 
 describe('POST /sites', () => {
-  it('stores the token encrypted and creates the site quota with WordPress defaults', async () => {
+  it('stores the token encrypted and creates the site quota with publishing defaults', async () => {
     const id = await site();
 
     const { rows } = await t.db.query('SELECT token_enc, status FROM sites WHERE id = $1', [id]);
     expect(rows[0].status).toBe('active');
     expect(rows[0].token_enc.includes(Buffer.from('tok-secret'))).toBe(false);
-    expect(decryptToken(rows[0].token_enc, KEY)).toBe('tok-secret');
+    expect(decryptToken(rows[0].token_enc, KEY)).toBe(TOKEN);
     const quota = await t.db.query('SELECT capacity, refill, tokens FROM quotas WHERE scope = $1', [
       `site:${id}`,
     ]);
     expect(quota.rows[0]).toEqual({ capacity: 4, refill: 2, tokens: 4 });
   });
 
+  it('registers Shopify credentials encrypted and validates the store root', async () => {
+    const token = JSON.stringify({
+      clientId: 'client',
+      clientSecret: 'secret',
+      blogId: 'gid://shopify/Blog/123',
+    });
+
+    const payload = { platform: 'shopify', base_url: 'https://test-store.myshopify.com', token };
+
+    const response = await app.inject({ method: 'POST', url: '/sites', payload });
+    expect(response.statusCode).toBe(201);
+    const { rows } = await t.db.query('SELECT platform, token_enc FROM sites WHERE id = $1', [
+      response.json().id,
+    ]);
+    expect(rows[0].platform).toBe('shopify');
+    expect(decryptToken(rows[0].token_enc, KEY)).toBe(token);
+
+    for (const base_url of [
+      'http://test-store.myshopify.com',
+      'https://attacker.example',
+      'https://test-store.myshopify.com/admin',
+      'https://test-store.myshopify.com.attacker.example',
+    ]) {
+      const rejected = await app.inject({
+        method: 'POST',
+        url: '/sites',
+        payload: { ...payload, base_url },
+      });
+      expect(rejected.statusCode).toBe(400);
+    }
+
+    const malformed = await app.inject({
+      method: 'POST',
+      url: '/sites',
+      payload: { ...payload, token: 'plain-secret' },
+    });
+    expect(malformed.statusCode).toBe(400);
+  });
+
   it('rejects unsupported platforms', async () => {
-    for (const platform of ['shopify', 'wix', 'ghost']) {
+    for (const platform of ['wordpress', 'wix', 'ghost']) {
       const res = await app.inject({
         method: 'POST',
         url: '/sites',
-        payload: { platform, base_url: 'http://x', token: 't' },
+        payload: { platform, base_url: 'https://test-store.myshopify.com', token: TOKEN },
       });
       expect(res.statusCode).toBe(400);
     }
@@ -348,7 +393,7 @@ describe('site recovery and destination validation', () => {
       const res = await app.inject({
         method: 'POST',
         url: '/sites',
-        payload: { platform: 'wordpress', base_url, token: 'secret' },
+        payload: { platform: 'shopify', base_url, token: TOKEN },
       });
       expect(res.statusCode).toBe(400);
     }
@@ -366,7 +411,7 @@ describe('site recovery and destination validation', () => {
     const res = await app.inject({
       method: 'PATCH',
       url: `/sites/${id}`,
-      payload: { token: 'replacement' },
+      payload: { token: TOKEN.replace('tok-secret', 'replacement') },
     });
     expect(res.statusCode).toBe(200);
     const { rows } = await t.db.query(
@@ -375,7 +420,7 @@ describe('site recovery and destination validation', () => {
     );
     expect(rows[0].status).toBe('active');
     expect(rows[0].verified_at).toBeNull();
-    expect(decryptToken(rows[0].token_enc, KEY)).toBe('replacement');
+    expect(decryptToken(rows[0].token_enc, KEY)).toBe(TOKEN.replace('tok-secret', 'replacement'));
     const quota = await t.db.query('SELECT failures, open_until FROM quotas WHERE scope = $1', [
       `site:${id}`,
     ]);
@@ -385,7 +430,7 @@ describe('site recovery and destination validation', () => {
         await app.inject({
           method: 'PATCH',
           url: `/sites/${crypto.randomUUID()}`,
-          payload: { token: 'replacement' },
+          payload: { token: TOKEN.replace('tok-secret', 'replacement') },
         })
       ).statusCode,
     ).toBe(404);

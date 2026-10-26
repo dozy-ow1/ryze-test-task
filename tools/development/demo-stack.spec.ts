@@ -32,6 +32,7 @@ describe('demo isolation', () => {
     expect(config.services.worker.environment).toMatchObject({
       LLM_PROVIDER: 'mock',
       IMAGE_PROVIDER: 'mock',
+      SHOPIFY_MODE: 'mock',
       DATABASE_URL: 'postgres://ryze:ryze@postgres:5432/ryze',
     });
     expect(options.input).not.toContain('real-key');

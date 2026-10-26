@@ -10,7 +10,7 @@ x-worker: &worker
   environment:
     LLM_BASE_URL: ${LLM_BASE_URL:-http://mock-providers:8091}
     IMAGE_BASE_URL: ${IMAGE_BASE_URL:-http://mock-providers:8091}
-    MOCK_WORDPRESS_URL: ${MOCK_WORDPRESS_URL:-http://mock-wordpress:8092}
+    MOCK_SHOPIFY_URL: ${MOCK_SHOPIFY_URL:-http://mock-shopify:8092}
   # node is not PID 1, so a SIGKILL to it ends the container the way a crash does and the restart
   # policy brings it back (`docker kill` counts as a manual stop and would not be restarted).
   init: true
@@ -110,7 +110,7 @@ services:
         condition: service_completed_successfully
       minio-init:
         condition: service_completed_successfully
-      mock-wordpress:
+      mock-shopify:
         condition: service_healthy
 
   reconciler:
@@ -139,12 +139,12 @@ services:
       timeout: 3s
       retries: 30
 
-  mock-wordpress:
+  mock-shopify:
     build:
       context: .
       args:
-        PKG: mock-wordpress
-    image: ryze-mock-wordpress
+        PKG: mock-shopify
+    image: ryze-mock-shopify
     env_file: .env
     environment:
       PORT: 8092

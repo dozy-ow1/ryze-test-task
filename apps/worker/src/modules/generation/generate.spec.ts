@@ -63,7 +63,13 @@ function ctx(clients: Partial<Clients>, op: Partial<Operation> = {}): StepContex
       remote_media_id: null,
       remote_post_id: null,
     },
-    site: { id: 's', platform: 'wordpress', base_url: 'http://wp', token: 't', verified_at: null },
+    site: {
+      id: 's',
+      platform: 'shopify',
+      base_url: 'https://test-store.myshopify.com',
+      token: 't',
+      verified_at: null,
+    },
     clients: {
       db: t.db,
 

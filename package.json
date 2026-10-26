@@ -15,7 +15,8 @@
     "migrate": "tsx packages/core/src/database/migrate.ts",
     "seed": "tsx tools/development/seed.ts",
     "demo": "tsx tools/development/demo.ts",
-    "smoke": "tsx tools/development/smoke.ts"
+    "smoke": "tsx tools/development/smoke.ts",
+    "shopify:check": "tsx tools/development/shopify.ts"
   },
   "devDependencies": {
     "@biomejs/biome": "2.6.3",

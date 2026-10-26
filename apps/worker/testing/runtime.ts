@@ -32,7 +32,7 @@ export function createRunner(
 
 export async function seed(db: Database, n: number): Promise<{ siteId: string; ids: string[] }> {
   const { rows } = await db.query(
-    `INSERT INTO sites (platform, base_url, token_enc) VALUES ('wordpress', 'http://wp', $1) RETURNING id`,
+    `INSERT INTO sites (platform, base_url, token_enc) VALUES ('shopify', 'https://test-store.myshopify.com', $1) RETURNING id`,
     [encryptToken('tok', KEY)],
   );
 

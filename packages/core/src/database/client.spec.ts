@@ -17,7 +17,7 @@ afterAll(() => t.drop());
 beforeEach(async () => {
   await t.db.query('TRUNCATE operations, articles, sites, quotas RESTART IDENTITY CASCADE');
   const { rows } = await t.db.query(
-    `INSERT INTO sites (platform, base_url, token_enc) VALUES ('wordpress', 'http://wp', '\\x00') RETURNING id`,
+    `INSERT INTO sites (platform, base_url, token_enc) VALUES ('shopify', 'https://test-store.myshopify.com', '\\x00') RETURNING id`,
   );
   siteId = rows[0].id;
 });

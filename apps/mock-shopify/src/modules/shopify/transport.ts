@@ -45,19 +45,20 @@ export function createTransport(
 
   // Writes can fail before or after taking effect; reads remain available for recovery lookups.
   const route: Route = (handler) => async (request, reply) => {
-    const authorization = request.headers.authorization ?? '';
-    const bearer = /^Bearer (.+)$/i.exec(authorization)?.[1];
-    const basic = /^Basic (.+)$/i.exec(authorization)?.[1];
-    const token = bearer ?? (basic ? Buffer.from(basic, 'base64').toString('utf8') : undefined);
-    const site = token === undefined ? undefined : sites.get(token);
+    const accessToken = request.headers['x-shopify-access-token'];
+
+    const site = [...sites.values()].find(
+      (item) => accessToken === `mock-${item.credentials.clientId}`,
+    );
 
     if (!site) {
       reply.code(401);
 
-      return { error: 'this route needs credentials registered for WordPress' };
+      return { error: 'this route needs registered Shopify credentials' };
     }
 
-    const write = request.method === 'POST';
+    const query = (request.body as { query?: string })?.query ?? '';
+    const write = /^\s*mutation\b/.test(query) && !query.includes('mutation StageCover');
     const fault = write ? pickFault(site.faults) : undefined;
 
     if (fault === undefined) {

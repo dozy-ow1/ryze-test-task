@@ -14,7 +14,7 @@ try {
     clients: createClients(config, db),
     log,
     siteTokenKey: config.SITE_TOKEN_KEY,
-    mockWordPressUrl: config.MOCK_WORDPRESS_URL,
+    mockShopifyUrl: config.SHOPIFY_MODE === 'mock' ? config.MOCK_SHOPIFY_URL : undefined,
   });
   console.log(JSON.stringify(report));
 } finally {

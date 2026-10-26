@@ -5,14 +5,15 @@ import { type AppOptions, buildApp } from '../src/app.js';
 
 type FastifyInstance = ReturnType<typeof buildApp>;
 
-export const WP = '/wordpress/wp/v2';
-export const HOST = 'mock-wordpress:8092';
-export const JPEG = Buffer.from([0xff, 0xd8, 0xff, 0xe0, 0x00, 0x10, 0x4a, 0x46, 0x49, 0x46]);
+export const BLOG_ID = 'gid://shopify/Blog/1';
+
+export const mockCredentials = (id: string) =>
+  JSON.stringify({ clientId: id, clientSecret: 'mock-secret', blogId: BLOG_ID });
 
 export interface Inspect {
   sites: {
     token: string;
-    platform: 'wordpress';
+    platform: 'shopify';
     faults: { rate: number; kinds: FaultKind[] };
     faults_injected: Record<FaultKind, number>;
     media: { id: string; filename: string }[];
@@ -49,7 +50,7 @@ export async function registerSite(
   const res = await app.inject({
     method: 'POST',
     url: '/_admin/sites',
-    payload: { token, platform: 'wordpress', faults },
+    payload: { token, platform: 'shopify', faults },
   });
   expect(res.statusCode).toBe(201);
 }

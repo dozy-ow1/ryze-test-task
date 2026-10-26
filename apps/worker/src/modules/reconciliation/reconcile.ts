@@ -11,7 +11,7 @@ export interface Reconcile {
   clients: Clients;
   log: Logger;
   siteTokenKey: string;
-  mockWordPressUrl?: string; // in production: each platform's list endpoint, by our article-id field
+  mockShopifyUrl?: string; // in production: each platform's list endpoint, by our article-id field
 }
 
 // Runs once (Compose loops it every 60 s). Three read-mostly jobs: delete stray drafts, report
@@ -19,9 +19,9 @@ export interface Reconcile {
 export async function reconcile(r: Reconcile) {
   let strays = null;
 
-  if (r.mockWordPressUrl) {
+  if (r.mockShopifyUrl) {
     try {
-      strays = await removeStrays(r, r.mockWordPressUrl);
+      strays = await removeStrays(r, r.mockShopifyUrl);
     } catch (err) {
       r.log.error({ err }, 'stray cleanup failed; continuing report');
     }

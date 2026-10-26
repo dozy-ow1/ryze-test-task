@@ -1,5 +1,5 @@
 // pnpm seed [articles=20] [fault rate=0]
-// Registers two mock WordPress sites, then posts the articles in bulk.
+// Registers two mock Shopify sites, then posts the articles in bulk.
 import { API, call } from './client.js';
 import { ALL_FAULTS, brief, registerMockSite } from './fixtures.js';
 

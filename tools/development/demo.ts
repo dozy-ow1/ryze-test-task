@@ -16,7 +16,7 @@ const SERVICES = [
   'postgres',
   'minio',
   'mock-providers',
-  'mock-wordpress',
+  'mock-shopify',
   'api',
   'worker-generate',
   'worker-publish',
@@ -137,12 +137,12 @@ async function run(
   sh(`docker compose up -d --build --wait ${SERVICES.join(' ')}`);
   const API = stack.endpoint('api', 8080);
   const PROVIDERS = stack.endpoint('mock-providers', 8091);
-  const PLATFORMS = stack.endpoint('mock-wordpress', 8092);
+  const SHOPIFY = stack.endpoint('mock-shopify', 8092);
   const faults = { rate: faultRate, kinds: ALL_FAULTS };
   await call('POST', `${PROVIDERS}/_admin/faults`, faults);
   const sites = [
-    await registerMockSite(faults, { api: API, platforms: PLATFORMS }),
-    await registerMockSite(faults, { api: API, platforms: PLATFORMS }),
+    await registerMockSite(faults, { api: API, shopify: SHOPIFY }),
+    await registerMockSite(faults, { api: API, shopify: SHOPIFY }),
   ];
 
   const items = Array.from({ length: articles }, (_, n) => ({
@@ -241,7 +241,7 @@ async function run(
   }
 
   // What the platforms hold, before the reconciler has had any chance to clean up.
-  const inspect = (await call<Inspect>('GET', `${PLATFORMS}/_admin/inspect`)).body;
+  const inspect = (await call<Inspect>('GET', `${SHOPIFY}/_admin/inspect`)).body;
 
   const recorded = new Map(
     psql('SELECT id, site_id, remote_media_id, remote_post_id, remote_url FROM articles')

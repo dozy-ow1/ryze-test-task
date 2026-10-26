@@ -1,7 +1,7 @@
 // Shared by development commands: the stack's ports on localhost.
 
 export const API = 'http://localhost:8080';
-export const PLATFORMS = 'http://localhost:8092';
+export const SHOPIFY = 'http://localhost:8092';
 
 export async function call<T = Record<string, unknown>>(
   method: string,
